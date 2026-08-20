@@ -380,5 +380,50 @@ func SetApiRouter(router *gin.Engine) {
 			deploymentsRoute.POST("/:id/extend", controller.ExtendDeployment)
 			deploymentsRoute.DELETE("/:id", controller.DeleteDeployment)
 		}
+
+		// 企业身份归因治理（第一批，Root 管理 API）
+		aiGovernanceRoute := apiRouter.Group("/ai-governance")
+		aiGovernanceRoute.Use(middleware.RootAuth())
+		{
+			// Business Domain
+			aiGovernanceRoute.GET("/business-domains", controller.GetBusinessDomains)
+			aiGovernanceRoute.POST("/business-domains", controller.CreateBusinessDomain)
+			aiGovernanceRoute.PUT("/business-domains/:id", controller.UpdateBusinessDomain)
+			// Owner Team
+			aiGovernanceRoute.GET("/owner-teams", controller.GetOwnerTeams)
+			aiGovernanceRoute.POST("/owner-teams", controller.CreateOwnerTeam)
+			aiGovernanceRoute.PUT("/owner-teams/:id", controller.UpdateOwnerTeam)
+			// Usage Team
+			aiGovernanceRoute.GET("/usage-teams", controller.GetUsageTeams)
+			aiGovernanceRoute.POST("/usage-teams", controller.CreateUsageTeam)
+			aiGovernanceRoute.PUT("/usage-teams/:id", controller.UpdateUsageTeam)
+			// Principal
+			aiGovernanceRoute.GET("/principals", controller.GetPrincipals)
+			aiGovernanceRoute.GET("/principals/:id", controller.GetPrincipal)
+			aiGovernanceRoute.POST("/principals", controller.CreatePrincipal)
+			aiGovernanceRoute.PUT("/principals/:id", controller.UpdatePrincipal)
+			// Credential Purpose
+			aiGovernanceRoute.GET("/credential-purposes", controller.GetCredentialPurposes)
+			aiGovernanceRoute.POST("/credential-purposes", controller.CreateCredentialPurpose)
+			aiGovernanceRoute.PUT("/credential-purposes/:id", controller.UpdateCredentialPurpose)
+			// Application
+			aiGovernanceRoute.GET("/applications", controller.GetApplications)
+			aiGovernanceRoute.GET("/applications/:id", controller.GetApplication)
+			aiGovernanceRoute.POST("/applications", controller.CreateApplication)
+			aiGovernanceRoute.PUT("/applications/:id", controller.UpdateApplication)
+			// Identity Profile
+			aiGovernanceRoute.GET("/identity-profiles", controller.GetIdentityProfiles)
+			aiGovernanceRoute.GET("/identity-profiles/:id", controller.GetIdentityProfile)
+			aiGovernanceRoute.POST("/identity-profiles", controller.CreateIdentityProfile)
+			aiGovernanceRoute.PUT("/identity-profiles/:id", controller.UpdateIdentityProfile)
+			aiGovernanceRoute.PUT("/identity-profiles/:id/app-bindings", controller.ReplaceIdentityProfileAppBindings)
+			// Signing Key
+			aiGovernanceRoute.GET("/identity-profiles/:id/signing-keys", controller.GetSigningKeys)
+			aiGovernanceRoute.POST("/identity-profiles/:id/signing-keys/generate", controller.GenerateSigningKey)
+			aiGovernanceRoute.POST("/identity-profiles/:id/signing-keys/rotate", controller.RotateSigningKey)
+			aiGovernanceRoute.POST("/identity-profiles/:id/signing-keys/:key_id/revoke", controller.RevokeSigningKey)
+			// Identity Audit
+			aiGovernanceRoute.GET("/identity-audit-events", controller.GetIdentityAuditEvents)
+		}
 	}
 }

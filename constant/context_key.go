@@ -73,4 +73,9 @@ const (
 	// fallback in authHelper (finishAdminAudit) skips its record to avoid
 	// duplicate entries.
 	ContextKeyAuditLogged ContextKey = "audit_logged"
+
+	// ContextKeyTrustedAttribution stores the trusted attribution context for
+	// the current request. Batch 1 only reserves the key; the runtime identity
+	// middleware (Batch 2) writes it.
+	ContextKeyTrustedAttribution ContextKey = "trusted_attribution"
 )

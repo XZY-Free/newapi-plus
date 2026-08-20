@@ -36,3 +36,36 @@ func TestLockForUpdateEmitsRowLock(t *testing.T) {
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	assert.NotContains(t, buildSQL(), "FOR UPDATE")
 }
+
+// 治理表的事务行锁方法必须复用 lockForUpdate：MySQL/PostgreSQL 输出 FOR UPDATE，
+// SQLite 走无 FOR UPDATE 兼容路径。
+func TestGovernanceLockHelpersEmitRowLock(t *testing.T) {
+	dummyDB, err := gorm.Open(tests.DummyDialector{}, &gorm.Config{DryRun: true})
+	require.NoError(t, err)
+
+	profileSQL := func() string {
+		_, _ = LockAIIdentityProfile(dummyDB, 7)
+		var p AIIdentityProfile
+		return lockForUpdate(dummyDB).Where("id = ?", 7).Find(&p).Statement.SQL.String()
+	}
+	principalSQL := func() string {
+		_, _ = LockAIPrincipal(dummyDB, 7)
+		var p AIPrincipal
+		return lockForUpdate(dummyDB).Where("id = ?", 7).Find(&p).Statement.SQL.String()
+	}
+
+	t.Cleanup(func() {
+		common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	})
+
+	common.SetDatabaseTypes(common.DatabaseTypeMySQL, common.DatabaseTypeSQLite)
+	assert.Contains(t, profileSQL(), "FOR UPDATE", "MySQL 下 Profile 锁必须带 FOR UPDATE")
+	assert.Contains(t, principalSQL(), "FOR UPDATE", "MySQL 下 Principal 锁必须带 FOR UPDATE")
+
+	common.SetDatabaseTypes(common.DatabaseTypePostgreSQL, common.DatabaseTypeSQLite)
+	assert.Contains(t, profileSQL(), "FOR UPDATE", "PostgreSQL 下 Profile 锁必须带 FOR UPDATE")
+
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	assert.NotContains(t, profileSQL(), "FOR UPDATE", "SQLite 必须跳过 FOR UPDATE")
+	assert.NotContains(t, principalSQL(), "FOR UPDATE", "SQLite 必须跳过 FOR UPDATE")
+}

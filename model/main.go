@@ -296,6 +296,10 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	// 第一批企业身份归因治理/审计表（仅主库 DB，绝不进入 LOG_DB/ClickHouse）。
+	if err := DB.AutoMigrate(AIGovernanceModels()...); err != nil {
+		return err
+	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -353,6 +357,13 @@ func migrateDBFast() error {
 		{&SystemInstance{}, "SystemInstance"},
 		{&SystemTask{}, "SystemTask"},
 		{&SystemTaskLock{}, "SystemTaskLock"},
+	}
+	// 第一批企业身份归因治理/审计表（仅主库 DB，绝不进入 LOG_DB/ClickHouse）。
+	for _, m := range AIGovernanceModels() {
+		migrations = append(migrations, struct {
+			model interface{}
+			name  string
+		}{m, "AI-Governance"})
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

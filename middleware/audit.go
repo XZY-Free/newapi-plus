@@ -94,6 +94,26 @@ var auditRouteActions = map[string]string{
 
 	// 日志
 	"POST /api/system-task/log-cleanup": "log.cleanup_start",
+
+	// 企业身份归因治理（第一批，文档 6.16）
+	"POST /api/ai-governance/business-domains":                                  "business_domain.create",
+	"PUT /api/ai-governance/business-domains/:id":                               "business_domain.update",
+	"POST /api/ai-governance/owner-teams":                                       "owner_team.create",
+	"PUT /api/ai-governance/owner-teams/:id":                                    "owner_team.update",
+	"POST /api/ai-governance/usage-teams":                                       "usage_team.create",
+	"PUT /api/ai-governance/usage-teams/:id":                                    "usage_team.update",
+	"POST /api/ai-governance/principals":                                        "principal.create",
+	"PUT /api/ai-governance/principals/:id":                                     "principal.update",
+	"POST /api/ai-governance/credential-purposes":                               "credential_purpose.create",
+	"PUT /api/ai-governance/credential-purposes/:id":                            "credential_purpose.update",
+	"POST /api/ai-governance/applications":                                      "application.create",
+	"PUT /api/ai-governance/applications/:id":                                   "application.update",
+	"POST /api/ai-governance/identity-profiles":                                 "identity_profile.create",
+	"PUT /api/ai-governance/identity-profiles/:id":                              "identity_profile.update",
+	"PUT /api/ai-governance/identity-profiles/:id/app-bindings":                 "identity_profile.replace_bindings",
+	"POST /api/ai-governance/identity-profiles/:id/signing-keys/generate":       "signing_key.generate",
+	"POST /api/ai-governance/identity-profiles/:id/signing-keys/rotate":         "signing_key.rotate",
+	"POST /api/ai-governance/identity-profiles/:id/signing-keys/:key_id/revoke": "signing_key.revoke",
 }
 
 // beginAdminAudit 在管理/root 写操作进入 handler 前包装 ResponseWriter，
