@@ -78,4 +78,10 @@ const (
 	// the current request. Batch 1 only reserves the key; the runtime identity
 	// middleware (Batch 2) writes it.
 	ContextKeyTrustedAttribution ContextKey = "trusted_attribution"
+
+	// ContextKeyAIOriginalMethod / ContextKeyAIOriginalPath 记录视频类 converter
+	// 在改写 URL 之前的“外部入站 method/path”，供 AIIdentityAuth 构造 canonical
+	// 签名原文（文档 7.4）时使用，避免 converter 改写破坏签名验证。
+	ContextKeyAIOriginalMethod ContextKey = "ai_original_method"
+	ContextKeyAIOriginalPath   ContextKey = "ai_original_path"
 )

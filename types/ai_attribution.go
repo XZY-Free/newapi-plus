@@ -22,6 +22,21 @@ type SnapshotApplication struct {
 	BindingEnabled bool `json:"binding_enabled"`
 }
 
+// SignedExecutionContext 是 X-AI-Context 解码后的协议字段（文档 7.3）。
+// 严格 Schema：仅允许下列字段，未知字段拒绝；其余身份事实一律由网关从主数据决定。
+type SignedExecutionContext struct {
+	RootAppID          string `json:"root_app_id"`
+	RootRunID          string `json:"root_run_id"`
+	CurrentExecutionID string `json:"current_execution_id"`
+	ParentExecutionID  string `json:"parent_execution_id"`
+	ExecutionType      string `json:"execution_type"`
+	ExecutionDepth     *int   `json:"execution_depth"`
+	WorkflowID         string `json:"workflow_id"`
+	AgentID            string `json:"agent_id"`
+	TaskID             string `json:"task_id"`
+	NodeID             string `json:"node_id"`
+}
+
 // ProfileRateLimit 是企业 Profile 级请求频率限制配置。
 type ProfileRateLimit struct {
 	Enabled       bool `json:"enabled"`

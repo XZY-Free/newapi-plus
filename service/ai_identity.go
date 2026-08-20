@@ -1,16 +1,26 @@
 package service
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
 )
 
@@ -22,24 +32,38 @@ import (
 // 不跨进程；跨节点一致性由后续批次的运行时刷新/分布式缓存承担。
 // ---------------------------------------------------------------------------
 
-type identitySnapshotCacheStore struct {
-	sync.RWMutex
-	m map[int]*types.IdentitySnapshot
+type identitySnapshotCacheEntry struct {
+	snap      *types.IdentitySnapshot
+	expiresAt int64
 }
 
-var identitySnapshotCache = &identitySnapshotCacheStore{m: map[int]*types.IdentitySnapshot{}}
+type identitySnapshotCacheStore struct {
+	sync.RWMutex
+	m map[int]*identitySnapshotCacheEntry
+}
+
+var identitySnapshotCache = &identitySnapshotCacheStore{m: map[int]*identitySnapshotCacheEntry{}}
+
+// snapshotCacheTTLSeconds 依据运行时模式决定快照缓存 TTL（文档 7.15）：
+// ENFORCE 10 秒，AUDIT/disabled 30 秒。
+func snapshotCacheTTLSeconds() int64 {
+	if GetAttributionMode() == constant.AttributionModeEnforce {
+		return 10
+	}
+	return 30
+}
 
 // GetIdentitySnapshotByTokenID 按 token_id 统一读取完整身份快照，带节点内缓存。
-// 若该 token 未登记 Profile，返回 (nil, nil)。
+// 若该 token 未登记 Profile，返回 (nil, nil)。返回深拷贝，调用者修改不污染缓存。
 func GetIdentitySnapshotByTokenID(tokenID int) (*types.IdentitySnapshot, error) {
 	if tokenID <= 0 {
 		return nil, nil
 	}
+	now := common.GetTimestamp()
 	identitySnapshotCache.RLock()
-	if s, ok := identitySnapshotCache.m[tokenID]; ok {
+	if e, ok := identitySnapshotCache.m[tokenID]; ok && e.expiresAt > now {
 		identitySnapshotCache.RUnlock()
-		// 返回深拷贝，调用者修改不得污染缓存。
-		return s.Clone(), nil
+		return e.snap.Clone(), nil
 	}
 	identitySnapshotCache.RUnlock()
 
@@ -51,15 +75,19 @@ func GetIdentitySnapshotByTokenID(tokenID int) (*types.IdentitySnapshot, error) 
 		return nil, nil
 	}
 	identitySnapshotCache.Lock()
-	identitySnapshotCache.m[tokenID] = s
+	identitySnapshotCache.m[tokenID] = &identitySnapshotCacheEntry{
+		snap:      s,
+		expiresAt: now + snapshotCacheTTLSeconds(),
+	}
 	identitySnapshotCache.Unlock()
 	return s.Clone(), nil
 }
 
 // invalidateIdentitySnapshotCache 清除当前节点全部身份快照缓存。
+// 任何治理实体被修改后立即调用，保证管理 API 写入在当前节点立即生效。
 func invalidateIdentitySnapshotCache() {
 	identitySnapshotCache.Lock()
-	identitySnapshotCache.m = map[int]*types.IdentitySnapshot{}
+	identitySnapshotCache.m = map[int]*identitySnapshotCacheEntry{}
 	identitySnapshotCache.Unlock()
 }
 
@@ -1899,4 +1927,536 @@ func isUniqueConstraintError(err error) bool {
 	s := err.Error()
 	return strings.Contains(s, "unique") || strings.Contains(s, "Duplicate entry") ||
 		strings.Contains(s, "duplicate key") || strings.Contains(s, "UNIQUE constraint failed")
+}
+
+// ---------------------------------------------------------------------------
+// 第二批：运行时身份验证
+//
+// 本段只依赖 IdentitySnapshot 与协议 Header，不直接访问数据库（快照由上层缓存/构建
+// 提供），因此可被 middleware 与单测独立复用。
+// ---------------------------------------------------------------------------
+
+// AIIdentityHeaders 是六个企业身份 Header 的原始取值（文档 7.2 / 7.4）。
+type AIIdentityHeaders struct {
+	ContextVersion string
+	Context        string
+	Timestamp      string
+	Nonce          string
+	KeyId          string
+	Signature      string
+}
+
+// GetAttributionMode 读取并校验 AI_ATTRIBUTION_MODE（文档 7.8）。
+// 返回 disabled|audit|enforce；非法值返回空字符串，调用方应 fail-closed。
+func GetAttributionMode() string {
+	mode := strings.TrimSpace(os.Getenv(constant.AttributionModeEnv))
+	if mode == "" {
+		return constant.AttributionModeDisabled
+	}
+	if !constant.AttributionModeValid(mode) {
+		return ""
+	}
+	return mode
+}
+
+// isBase64URLRawString 校验字符串只含 Base64URL 无 padding 字符（A-Za-z0-9-_）。
+func isBase64URLRawString(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isStrictLowerHex 判断字符串是否为严格 64 位小写十六进制（HMAC-SHA256 输出格式）。
+func isStrictLowerHex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// ErrContextRequired 表示请求缺少 X-AI-Context（区别于“存在但非法”的 CONTEXT_INVALID）。
+var ErrContextRequired = errors.New("context required")
+
+// ErrContextTooLarge 表示 X-AI-Context 编码或解码后超出长度上限，映射到
+// AI_IDENTITY_CONTEXT_TOO_LARGE（7.19 细分错误码）。
+var ErrContextTooLarge = errors.New("context too large")
+
+// DecodeSignedContext 解码 X-AI-Context（文档 7.3）：
+// UTF-8 JSON → Base64URL RawURLEncoding 无 padding；encoded<=8192、decoded<=6144；
+// 严格拒绝未知字段、尾随 JSON、非法 UTF-8。空输入返回 ErrContextRequired；
+// 编码/解码超限返回 ErrContextTooLarge。
+func DecodeSignedContext(encoded string) (*types.SignedExecutionContext, error) {
+	if strings.TrimSpace(encoded) == "" {
+		return nil, ErrContextRequired
+	}
+	if len(encoded) > constant.AttributionContextMaxEncoded {
+		return nil, ErrContextTooLarge
+	}
+	if !isBase64URLRawString(encoded) {
+		return nil, errors.New("X-AI-Context 不是合法的 Base64URL no-padding 编码")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, errors.New("X-AI-Context Base64URL 解码失败")
+	}
+	if len(decoded) > constant.AttributionContextMaxDecoded {
+		return nil, ErrContextTooLarge
+	}
+	if !utf8.Valid(decoded) {
+		return nil, errors.New("X-AI-Context 不是合法 UTF-8")
+	}
+	var ctx types.SignedExecutionContext
+	if err := common.DecodeJsonStrict(decoded, &ctx); err != nil {
+		return nil, fmt.Errorf("X-AI-Context JSON 非法（未知字段或尾随 JSON）: %w", err)
+	}
+	return &ctx, nil
+}
+
+// ValidateNonceFormat 校验 Nonce（文档 7.6）：Base64URL 字符，长度 22..64。
+func ValidateNonceFormat(nonce string) bool {
+	n := len(nonce)
+	if n < constant.AttributionNonceMinLen || n > constant.AttributionNonceMaxLen {
+		return false
+	}
+	return isBase64URLRawString(nonce)
+}
+
+// ValidateTimestamp 校验 Unix 秒时间戳是否在允许的时钟偏差内（文档 7.5）。
+// 对空白输入返回 false；对 MinInt64/MaxInt64 等极端值避免 `ts-now` 溢出导致的误放行。
+func ValidateTimestamp(timestamp string, now int64) bool {
+	trimmed := strings.TrimSpace(timestamp)
+	if trimmed == "" {
+		return false
+	}
+	ts, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return false
+	}
+	skew := attributionClockSkewSeconds()
+	// 只用不溢出的比较/减法：now 为当前秒（正值，远小于 int64 上限），skew<=900。
+	if ts > now {
+		// ts-now：ts<=MaxInt64、now>=0，永不溢出。
+		return ts-now <= skew
+	}
+	// ts<=now：先比较下限，避免 MinInt64 使 now-ts 溢出。
+	if ts < now-skew {
+		return false
+	}
+	return now-ts <= skew
+}
+
+// attributionClockSkewSeconds 读取 AI_ATTRIBUTION_CLOCK_SKEW_SECONDS（60..900，默认 300）。
+func attributionClockSkewSeconds() int64 {
+	value := int64(constant.AttributionClockSkewDefault)
+	if s := strings.TrimSpace(os.Getenv(constant.AttributionClockSkewEnv)); s != "" {
+		if parsed, err := strconv.ParseInt(s, 10, 64); err == nil {
+			value = parsed
+		}
+	}
+	if value < constant.AttributionClockSkewMin {
+		return constant.AttributionClockSkewMin
+	}
+	if value > constant.AttributionClockSkewMax {
+		return constant.AttributionClockSkewMax
+	}
+	return value
+}
+
+// BuildCanonicalString 构造签名原文（文档 7.4）：7 行 LF 分隔、末行后无 LF。
+// method 使用大写；path 不含 query；timestamp/nonce/keyId/encodedContext 使用原始字符串。
+func BuildCanonicalString(method, path, timestamp, nonce, keyID, encodedContext string) string {
+	return "v1\n" +
+		strings.ToUpper(strings.TrimSpace(method)) + "\n" +
+		strings.TrimSpace(path) + "\n" +
+		timestamp + "\n" +
+		nonce + "\n" +
+		keyID + "\n" +
+		encodedContext
+}
+
+// HMACSHA256Hex 计算 HMAC-SHA256 并返回 64 位小写十六进制。
+func HMACSHA256Hex(secret []byte, message string) string {
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(message))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// ConstantTimeHexEqual 常量时间比较两个 hex 摘要。
+func ConstantTimeHexEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return hmac.Equal([]byte(a), []byte(b))
+}
+
+// ValidateExecutionContext 校验 Context 字段依赖（文档 7.3 表）：
+// root_run_id 必填且 1..128 字符；DYNAMIC 时 root_app_id 必填；当前执行字段存在时
+// current_execution_id 必须存在；execution_depth 0..64。
+func ValidateExecutionContext(e *types.SignedExecutionContext, mode string) error {
+	if e == nil {
+		return errors.New("空执行上下文")
+	}
+	if e.RootRunID == "" {
+		return errors.New("root_run_id 必填")
+	}
+	if n := utf8.RuneCountInString(e.RootRunID); n < 1 || n > 128 {
+		return errors.New("root_run_id 长度必须在 1~128 字符")
+	}
+	if mode == constant.IdentityModeDynamic && e.RootAppID == "" {
+		return errors.New("DYNAMIC 时 root_app_id 必填")
+	}
+	hasCurrent := e.CurrentExecutionID != ""
+	childFieldPresent := e.ParentExecutionID != "" || e.ExecutionType != "" ||
+		e.ExecutionDepth != nil || e.WorkflowID != "" || e.AgentID != "" ||
+		e.TaskID != "" || e.NodeID != ""
+	if childFieldPresent && !hasCurrent {
+		return errors.New("存在任意当前执行字段时必须提供 current_execution_id")
+	}
+	// current_execution_id 与 execution_type 必须成对出现（文档 7.3）。
+	if hasCurrent && e.ExecutionType == "" {
+		return errors.New("current_execution_id 存在时 execution_type 必填")
+	}
+	if e.ExecutionType != "" && !hasCurrent {
+		return errors.New("execution_type 存在时 current_execution_id 必填")
+	}
+	if e.ExecutionDepth != nil {
+		if *e.ExecutionDepth < 0 || *e.ExecutionDepth > constant.AttributionMaxExecutionDepth {
+			return errors.New("execution_depth 必须在 0~64")
+		}
+	}
+	for name, present := range map[string]bool{
+		"parent_execution_id": e.ParentExecutionID != "",
+		"workflow_id":         e.WorkflowID != "",
+		"agent_id":            e.AgentID != "",
+		"task_id":             e.TaskID != "",
+		"node_id":             e.NodeID != "",
+	} {
+		if present && !hasCurrent {
+			return fmt.Errorf("%s 需要 current_execution_id", name)
+		}
+	}
+	return nil
+}
+
+// AIIdentityFailure 描述一次强身份验证失败。Code 为固定错误码；Reason 为审计 reason_code；
+// StoreUnavailable 表示 Redis 故障（enforce 应 503，audit 降级放行）。
+// ClaimedRootAppID 仅在 context 已解码、HMAC/时间戳/密钥均验证通过、且 root_app_id 为
+// 非空且语法合法的 app_code（但绑定校验失败，如 APP_NOT_BOUND）时携带客户端声称的应用
+// code，用于仅写入审计 claimed_root_app_id（7.11/6.11/7.8），绝不进入正式归因。
+type AIIdentityFailure struct {
+	Code             string
+	Reason           string
+	StoreUnavailable bool
+	ClaimedRootAppID string
+}
+
+// legalRootAppClaim 仅当 root_app_id 非空且为语法合法的 app_code（应用 code 字符集，
+// 文档 6.7）时返回该值，作为可写入审计 claimed_root_app_id 的合法声明；否则返回空。
+// 非法的 raw Context、签名、nonce、secret 永不作为声明存储。
+func legalRootAppClaim(code string) string {
+	if code == "" {
+		return ""
+	}
+	if err := validateDomainCode(code); err != nil {
+		return ""
+	}
+	return code
+}
+
+// resolveRootApp 校验并解析强身份的 root_app（文档 7.11 / 7.12 / 7.10 / 7.19）。
+// DYNAMIC 未绑定目标应用 => APP_NOT_BOUND；HYBRID 提供且与固定 App 不一致 =>
+// HYBRID_APP_MISMATCH；无绑定 => APP_NOT_BOUND。
+func resolveRootApp(snapshot *types.IdentitySnapshot, e *types.SignedExecutionContext, mode string) (*types.SnapshotApplication, *AIIdentityFailure) {
+	if mode == constant.IdentityModeDynamic {
+		if e.RootAppID == "" {
+			return nil, &AIIdentityFailure{Code: string(constant.AIIdentityContextInvalid), Reason: constant.ReasonCodeContextInvalid}
+		}
+		for i := range snapshot.Applications {
+			app := &snapshot.Applications[i]
+			if app.AppCode == e.RootAppID {
+				if !app.AppEnabled {
+					return nil, &AIIdentityFailure{Code: string(constant.AIIdentityAppDisabled), Reason: constant.ReasonCodeAppDisabled}
+				}
+				return app, nil
+			}
+		}
+		// 未绑定：若客户端声称了语法合法的 app_code，仅在失败结果中携带该声明（审计专用），
+		// 绝不进入正式归因（7.8 强制）。
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityAppNotBound), Reason: constant.ReasonCodeAppNotBound, ClaimedRootAppID: legalRootAppClaim(e.RootAppID)}
+	}
+
+	// HYBRID：恰好绑定一个 App；如提供 root_app_id 必须与固定 App 一致。
+	if len(snapshot.Applications) != 1 {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityAppNotBound), Reason: constant.ReasonCodeAppNotBound}
+	}
+	fixed := &snapshot.Applications[0]
+	if e.RootAppID != "" && e.RootAppID != fixed.AppCode {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityHybridAppMismatch), Reason: constant.ReasonCodeHybridAppMismatch}
+	}
+	if !fixed.AppEnabled {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityAppDisabled), Reason: constant.ReasonCodeAppDisabled}
+	}
+	return fixed, nil
+}
+
+var (
+	// ErrNonceReplay 表示该 nonce 已被使用（重放）。
+	ErrNonceReplay = errors.New("nonce replay detected")
+	// ErrNonceStoreUnavailable 表示防重放存储不可用。
+	ErrNonceStoreUnavailable = errors.New("nonce store unavailable")
+)
+
+// ClaimNonce 以 Redis SET NX 原子占用 nonce（文档 7.6）。
+// key=ai:identity:nonce:<profile_id>:<nonce>，TTL 600 秒。返回 ErrNonceReplay 或
+// ErrNonceStoreUnavailable。
+func ClaimNonce(ctx context.Context, profileID int, nonce string) error {
+	if common.RDB == nil {
+		return ErrNonceStoreUnavailable
+	}
+	key := fmt.Sprintf("%s%d:%s", constant.IdentityNonceKeyPrefix, profileID, nonce)
+	ok, err := common.RDB.SetNX(ctx, key, "1", time.Duration(constant.AttributionNonceTTLSeconds)*time.Second).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return ErrNonceReplay
+		}
+		return ErrNonceStoreUnavailable
+	}
+	if !ok {
+		return ErrNonceReplay
+	}
+	return nil
+}
+
+// BuildVerifiedContext 构造 DYNAMIC/HYBRID 验证成功后的完整可信上下文（7.11/7.12/7.13）。
+func BuildVerifiedContext(snapshot *types.IdentitySnapshot, e *types.SignedExecutionContext,
+	app *types.SnapshotApplication, keyID, mode string) *constant.TrustedAttributionContext {
+	tc := &constant.TrustedAttributionContext{
+		TokenID:            snapshot.TokenID,
+		ProfileID:          snapshot.ProfileID,
+		CredentialVerified: true,
+		Environment:        snapshot.Environment,
+		IdentityMode:       snapshot.IdentityMode,
+		AttributionTarget:  snapshot.AttributionTarget,
+		IdentityVerified:   true,
+		ClientVerified:     true,
+		CallerID:           snapshot.CallerID,
+		CallerName:         snapshot.CallerName,
+		RootRunID:          e.RootRunID,
+		CurrentExecutionID: e.CurrentExecutionID,
+		ParentExecutionID:  e.ParentExecutionID,
+		ExecutionType:      e.ExecutionType,
+		WorkflowID:         e.WorkflowID,
+		AgentID:            e.AgentID,
+		TaskID:             e.TaskID,
+		NodeID:             e.NodeID,
+		SigningKeyID:       keyID,
+	}
+	if e.ExecutionDepth != nil {
+		tc.ExecutionDepth = *e.ExecutionDepth
+	}
+	if mode == constant.IdentityModeDynamic {
+		tc.IdentityAssurance = constant.IdentityAssuranceSignedContext
+		tc.IdentitySource = constant.IdentitySourceSignedContext
+	} else {
+		tc.IdentityAssurance = constant.IdentityAssuranceHybridVerified
+		tc.IdentitySource = constant.IdentitySourceHybrid
+	}
+	if app != nil {
+		tc.RootAppID = app.AppCode
+		tc.RootAppName = app.AppName
+		tc.ApplicationBusinessDomainID = app.BusinessDomainID
+		tc.ApplicationBusinessDomainCode = app.BusinessDomainCode
+		tc.ApplicationBusinessDomainName = app.BusinessDomainName
+		tc.OwnerTeamID = app.OwnerTeamID
+		tc.OwnerTeamCode = app.OwnerTeamCode
+		tc.OwnerTeamName = app.OwnerTeamName
+	}
+	return tc
+}
+
+// VerifyStrongIdentity 按文档 7.6 固定顺序验证 DYNAMIC/HYBRID 强身份：
+// 格式 → Profile/Key → Timestamp → HMAC → Caller/App 配置 → Redis SET NX → Context 语义。
+// 成功返回完整可信上下文；失败返回 AIIdentityFailure，绝不在失败时采纳客户端
+// root_app/run/execution（7.7/7.8 强制）。
+func VerifyStrongIdentity(snapshot *types.IdentitySnapshot, hdr *AIIdentityHeaders,
+	originalMethod, originalPath string, now int64) (*constant.TrustedAttributionContext, *AIIdentityFailure) {
+	mode := snapshot.IdentityMode
+
+	// 0. Header 完备性与版本。
+	if hdr == nil || hdr.Context == "" {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityContextRequired), Reason: constant.ReasonCodeContextRequired}
+	}
+	if hdr.ContextVersion != constant.AttributionContextVersion {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityContextInvalid), Reason: constant.ReasonCodeContextInvalid}
+	}
+
+	// 1. 格式：Context 解码（含超限细分）+ Nonce/KeyId/Signature 格式。
+	execCtx, err := DecodeSignedContext(hdr.Context)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrContextRequired):
+			return nil, &AIIdentityFailure{Code: string(constant.AIIdentityContextRequired), Reason: constant.ReasonCodeContextRequired}
+		case errors.Is(err, ErrContextTooLarge):
+			return nil, &AIIdentityFailure{Code: string(constant.AIIdentityContextTooLarge), Reason: constant.ReasonCodeContextTooLarge}
+		default:
+			return nil, &AIIdentityFailure{Code: string(constant.AIIdentityContextInvalid), Reason: constant.ReasonCodeContextInvalid}
+		}
+	}
+	if !ValidateNonceFormat(hdr.Nonce) {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityNonceInvalid), Reason: constant.ReasonCodeNonceInvalid}
+	}
+	if strings.TrimSpace(hdr.KeyId) == "" {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityKeyInvalid), Reason: constant.ReasonCodeKeyInvalid}
+	}
+	// 签名必须为严格 64 位小写十六进制（7.19）。
+	if !isStrictLowerHex(hdr.Signature) {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentitySignatureInvalid), Reason: constant.ReasonCodeSignatureInvalid}
+	}
+
+	// 2. Profile/Key：可用签名密钥。
+	secret, err := GetUsableSigningSecret(snapshot.ProfileID, hdr.KeyId)
+	if err != nil {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityKeyInvalid), Reason: constant.ReasonCodeKeyInvalid}
+	}
+
+	// 3. Timestamp。
+	if !ValidateTimestamp(hdr.Timestamp, now) {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityTimestampInvalid), Reason: constant.ReasonCodeTimestampInvalid}
+	}
+
+	// 4. HMAC。
+	canonical := BuildCanonicalString(originalMethod, originalPath, hdr.Timestamp, hdr.Nonce, hdr.KeyId, hdr.Context)
+	expected := HMACSHA256Hex(secret, canonical)
+	if !ConstantTimeHexEqual(expected, hdr.Signature) {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentitySignatureInvalid), Reason: constant.ReasonCodeSignatureInvalid}
+	}
+
+	// 5. Caller/App 配置。
+	app, fail := resolveRootApp(snapshot, execCtx, mode)
+	if fail != nil {
+		return nil, fail
+	}
+
+	// 6. Redis SET NX 防重放。
+	if err := ClaimNonce(context.Background(), snapshot.ProfileID, hdr.Nonce); err != nil {
+		if errors.Is(err, ErrNonceStoreUnavailable) {
+			return nil, &AIIdentityFailure{
+				Code: string(constant.AIReplayStoreUnavailable), Reason: constant.ReasonCodeReplayStoreUnavailable, StoreUnavailable: true,
+			}
+		}
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityReplayDetected), Reason: constant.ReasonCodeReplayDetected}
+	}
+
+	// 7. Context 语义。
+	if err := ValidateExecutionContext(execCtx, mode); err != nil {
+		return nil, &AIIdentityFailure{Code: string(constant.AIIdentityContextInvalid), Reason: constant.ReasonCodeContextInvalid}
+	}
+
+	return BuildVerifiedContext(snapshot, execCtx, app, hdr.KeyId, mode), nil
+}
+
+// AllowProfileRateLimit 以 Redis Lua 原子滑动窗口执行 Profile 级凭证限流（6.15.1/7.17）。
+// key=ai:credential:rate:<profile_id>；成员=request_id:毫秒时间戳；窗口=windowSeconds；
+// 超阈值返回 allowed=false；key 过期时间至少为窗口+60 秒。
+func AllowProfileRateLimit(ctx context.Context, profileID, windowSeconds, maxRequests int, member string) (bool, error) {
+	if common.RDB == nil {
+		return false, ErrNonceStoreUnavailable
+	}
+	key := fmt.Sprintf("%s%d", constant.CredentialRateLimitKeyPrefix, profileID)
+	nowMs := time.Now().UnixMilli()
+	windowMs := int64(windowSeconds) * 1000
+	expireSeconds := int64(windowSeconds) + 60
+	script := redis.NewScript(`
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local max = tonumber(ARGV[3])
+local member = ARGV[4]
+local expire = tonumber(ARGV[5])
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+local count = redis.call('ZCARD', key)
+if count < max then
+  redis.call('ZADD', key, now, member)
+  redis.call('EXPIRE', key, expire)
+  return 1
+end
+return 0
+`)
+	res, err := script.Run(ctx, common.RDB, []string{key}, nowMs, windowMs, int64(maxRequests), member, expireSeconds).Int64()
+	if err != nil {
+		return false, ErrNonceStoreUnavailable
+	}
+	return res == 1, nil
+}
+
+// WriteIdentityAuditEvent 落一条身份审计事件。只允许写入安全字段（见 model 注释），
+// 严禁携带 API Key / Signing Secret / Signature / Nonce / 原始 Context / Prompt / Response。
+func WriteIdentityAuditEvent(e *model.AIIdentityAuditEvent) error {
+	if e == nil {
+		return nil
+	}
+	if e.CreatedAt == 0 {
+		e.CreatedAt = common.GetTimestamp()
+	}
+	return model.DB.Create(e).Error
+}
+
+// IsAttributionRequired 集中分类是否需要“新消费身份验证”（文档 7.16）。
+//
+// 覆盖所有真实产生模型/生成式任务消费的 POST/WS 入口（/v1、Gemini /v1beta、Suno/MJ/
+// Video/Kling/Jimeng）；跳过模型列表 GET、文件/任务状态查询、结果下载/fetch。
+// 调用方传入的是 converter 改写后的 method/path（转换后消费/查询语义）。
+func IsAttributionRequired(method, path string) bool {
+	// /v1/realtime 是 WS 消费握手（GET）。
+	if path == "/v1/realtime" || path == "/v1beta/realtime" {
+		return true
+	}
+	if !strings.EqualFold(method, http.MethodPost) {
+		return false
+	}
+	return !isAIFetchOrStatusPath(path)
+}
+
+// isAIFetchOrStatusPath 报告 path 是否为“查询/下载/fetch”类非新消费端点（POST 下仍不要求
+// 身份验证）。只读模型列表/任务状态/下载等 GET 端点已被 IsAttributionRequired 的 method
+// 分支排除，因此本函数只在 POST 分支被调用，只需覆盖 POST 的查询/fetch 端点：
+//   - 模型列表 GET、/v1beta/models/{model}:generateContent 是消费 POST，不得误判为跳过；
+//   - 视频/Kling 任务状态与下载都是 GET，已被 method 分支排除；
+//   - /v1/videos/:id/remix、/kling/v1/videos/text2video 等是消费 POST，必须归因。
+func isAIFetchOrStatusPath(path string) bool {
+	p := path
+	if strings.HasPrefix(p, "/v1/files") || strings.HasPrefix(p, "/v1/fine-tunes") {
+		return true
+	}
+	if strings.HasPrefix(p, "/suno/fetch") {
+		return true
+	}
+	if strings.HasPrefix(p, "/mj/task/") || strings.HasPrefix(p, "/mj/image/") {
+		return true
+	}
+	// /:mode/mj 变体不以 /mj/ 前缀开头，改用子串匹配覆盖带 :mode 前缀的路径。
+	if strings.Contains(p, "/mj/task/list-by-condition") || strings.Contains(p, "/mj/submit/upload-discord-images") {
+		return true
+	}
+	// 纯上传根路径：不产生新模型消费。/mj 以及 /:mode/mj（任意 mode 单段）根。
+	if p == "/mj" {
+		return true
+	}
+	// /<mode>/mj 根：单段 mode 前缀 + /mj，无任何子路径（不产生新模型消费）。
+	if strings.HasSuffix(p, "/mj") && strings.Count(p, "/") == 2 {
+		return true
+	}
+	return false
 }

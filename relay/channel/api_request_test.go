@@ -13,7 +13,6 @@ import (
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -36,7 +35,6 @@ func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -60,7 +58,6 @@ func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testin
 func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -83,7 +80,6 @@ func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T)
 func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -114,7 +110,6 @@ func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
@@ -141,7 +136,6 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.T) {
 	t.Parallel()
 
-	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -190,4 +184,105 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+// TestProcessHeaderOverride_NeverLeaksAIAttributionHeaders 验收 L：
+// 六个企业身份协议 Header 一律不得经 wildcard/regex/显式 override/{client_header}
+// 透传或注入到上游请求头（纵深防护，大小写不敏感）。
+func TestProcessHeaderOverride_NeverLeaksAIAttributionHeaders(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	// 大小写混合的 X-AI-* 入站头（验证大小写不敏感过滤）。
+	ctx.Request.Header.Set("X-AI-Context-Version", "v1")
+	ctx.Request.Header.Set("x-ai-context", "EnCoded")
+	ctx.Request.Header.Set("X-AI-TIMESTAMP", "1700000000")
+	ctx.Request.Header.Set("x-ai-NONCE", "abcdefghijklmnopqrstuv")
+	ctx.Request.Header.Set("X-AI-Key-Id", "key-1")
+	ctx.Request.Header.Set("x-ai-Signature", "sig")
+	ctx.Request.Header.Set("X-Trace-Id", "trace-123")
+
+	aiNames := []string{
+		"x-ai-context-version", "x-ai-context", "x-ai-timestamp",
+		"x-ai-nonce", "x-ai-key-id", "x-ai-signature",
+	}
+	assertNone := func(t *testing.T, headers map[string]string) {
+		t.Helper()
+		for _, n := range aiNames {
+			if _, ok := headers[n]; ok {
+				t.Fatalf("AI attribution header %q leaked to upstream override map", n)
+			}
+		}
+	}
+
+	t.Run("wildcard", func(t *testing.T) {
+		info := &relaycommon.RelayInfo{
+			IsChannelTest: false,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				HeadersOverride: map[string]any{"*": ""},
+			},
+		}
+		headers, err := processHeaderOverride(info, ctx)
+		require.NoError(t, err)
+		assertNone(t, headers)
+		require.Equal(t, "trace-123", headers["x-trace-id"])
+	})
+
+	t.Run("regex", func(t *testing.T) {
+		info := &relaycommon.RelayInfo{
+			IsChannelTest: false,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				HeadersOverride: map[string]any{"regex:^x-ai-": ""},
+			},
+		}
+		headers, err := processHeaderOverride(info, ctx)
+		require.NoError(t, err)
+		assertNone(t, headers)
+	})
+
+	t.Run("re-prefix regex", func(t *testing.T) {
+		info := &relaycommon.RelayInfo{
+			IsChannelTest: false,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				HeadersOverride: map[string]any{"re:AI-": ""},
+			},
+		}
+		headers, err := processHeaderOverride(info, ctx)
+		require.NoError(t, err)
+		assertNone(t, headers)
+	})
+
+	t.Run("explicit override", func(t *testing.T) {
+		info := &relaycommon.RelayInfo{
+			IsChannelTest: false,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				HeadersOverride: map[string]any{
+					"X-AI-Context":     "injected",
+					"X-AI-Signature":   "injected",
+					"X-Upstream-Trace": "keep-me",
+				},
+			},
+		}
+		headers, err := processHeaderOverride(info, ctx)
+		require.NoError(t, err)
+		assertNone(t, headers)
+		require.Equal(t, "keep-me", headers["x-upstream-trace"])
+	})
+
+	t.Run("client_header into AI header name", func(t *testing.T) {
+		// {client_header:*} 解析出的值即使注入到 X-AI-* 输出头名，也必须在纵深防护被剥离。
+		info := &relaycommon.RelayInfo{
+			IsChannelTest: false,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				HeadersOverride: map[string]any{
+					"X-AI-Signature": "{client_header:X-Trace-Id}",
+				},
+			},
+		}
+		headers, err := processHeaderOverride(info, ctx)
+		require.NoError(t, err)
+		assertNone(t, headers)
+	})
 }

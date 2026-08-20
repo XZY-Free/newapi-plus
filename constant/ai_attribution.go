@@ -1,5 +1,7 @@
 package constant
 
+import "strings"
+
 // AI Attribution / Identity Governance 第一批常量。
 //
 // 本文件承载第一阶段“企业身份归因、弱身份凭证治理”所需的常量定义与
@@ -16,46 +18,79 @@ package constant
 
 // TrustedAttributionContext 是在请求生命周期内于 Gin Context 中传递的“可信归因上下文”。
 //
-// 第一批只完成该类型的定义与 Gin Context 的 Set/Get 基础（common/ai_attribution_context.go），
-// 不挂载运行时中间件。字段语义与文档第 7.13 节保持一致。
+// 第二批补齐文档 7.13 节全部字段。运行时就地生成并写入 Gin Context，随请求流转；
+// 绝不得携带 Signing Secret / Signature / Nonce / 原始 Context / API Key 明文。
 type TrustedAttributionContext struct {
-	// TokenID 是 NewAPI Token 的技术身份锚点，由 TokenAuth 认证后写入。
-	TokenID int `json:"token_id"`
+	// --- 凭证事实（7.13 凭证事实） ---
+	TokenID            int    `json:"token_id"`
+	ProfileID          int    `json:"profile_id"`
+	CredentialVerified bool   `json:"credential_verified"`
+	Environment        string `json:"environment"`
 
-	// ProfileID 是 ai_identity_profiles 的主键；未登记时为 0。
-	ProfileID int `json:"profile_id"`
-
-	// CredentialVerified 表示该请求使用的 API Key 已被 TokenAuth 验证。
-	CredentialVerified bool `json:"credential_verified"`
-	// ClientVerified 表示客户端/平台本身是否被密码学验证。
-	// 对 CREDENTIAL_ONLY 永远为 false，不得由 User-Agent 等推断为 true。
-	ClientVerified bool `json:"client_verified"`
-
+	// --- 身份模式与可信等级（7.13） ---
 	IdentityMode      string `json:"identity_mode"`
-	AttributionTarget string `json:"attribution_target"`
+	AttributionTarget string `json:"attribution_target_type"`
 	IdentityAssurance string `json:"identity_assurance"`
+	IdentitySource    string `json:"identity_source"`
+	IdentityVerified  bool   `json:"identity_verified"`
+	ClientVerified    bool   `json:"client_verified"`
+	FailureReason     string `json:"failure_reason,omitempty"`
 
-	// 弱身份个人归因
-	PrincipalID           int    `json:"principal_id"`
-	PrincipalCode         string `json:"principal_code"`
-	CredentialPurposeID   int    `json:"credential_purpose_id"`
-	CredentialPurposeCode string `json:"credential_purpose_code"`
-	Environment           string `json:"environment"`
+	// --- 弱身份个人归因（7.13） ---
+	PrincipalID             int    `json:"principal_id"`
+	PrincipalCode           string `json:"principal_code"`
+	PrincipalName           string `json:"principal_name"`
+	CredentialPurposeID     int    `json:"credential_purpose_id"`
+	CredentialPurposeCode   string `json:"credential_purpose_code"`
+	CredentialPurposeName   string `json:"credential_purpose_name"`
+	UsageBusinessDomainID   int    `json:"usage_business_domain_id"`
+	UsageBusinessDomainCode string `json:"usage_business_domain_code"`
+	UsageBusinessDomainName string `json:"usage_business_domain_name"`
+	UsageTeamID             int    `json:"usage_team_id"`
+	UsageTeamCode           string `json:"usage_team_code"`
+	UsageTeamName           string `json:"usage_team_name"`
 
-	// 强身份/应用归因
+	// --- 强身份 Caller（7.13） ---
 	CallerID   string `json:"caller_id"`
 	CallerName string `json:"caller_name"`
-	RootAppID  string `json:"root_app_id"` // 使用稳定 app_code
-	// ApplicationID 是 ai_applications 的自增 id，仅用于关联与索引。
-	ApplicationID int `json:"application_id"`
 
-	// SignedContext 标志本次请求是否携带了有效的签名执行上下文。
-	SignedContext bool `json:"signed_context"`
+	// --- 应用归因（7.13） ---
+	RootAppID                     string `json:"root_app_id"` // 对外使用稳定 app_code
+	RootAppName                   string `json:"root_app_name"`
+	ApplicationBusinessDomainID   int    `json:"application_business_domain_id"`
+	ApplicationBusinessDomainCode string `json:"application_business_domain_code"`
+	ApplicationBusinessDomainName string `json:"application_business_domain_name"`
+	OwnerTeamID                   int    `json:"owner_team_id"`
+	OwnerTeamCode                 string `json:"owner_team_code"`
+	OwnerTeamName                 string `json:"owner_team_name"`
+
+	// --- 执行（7.13） ---
+	RootRunID          string `json:"root_run_id"`
+	CurrentExecutionID string `json:"current_execution_id"`
+	ParentExecutionID  string `json:"parent_execution_id"`
+	ExecutionType      string `json:"execution_type"`
+	ExecutionDepth     int    `json:"execution_depth"`
+	WorkflowID         string `json:"workflow_id"`
+	AgentID            string `json:"agent_id"`
+	TaskID             string `json:"task_id"`
+	NodeID             string `json:"node_id"`
+
+	// --- 签名元数据（7.13） ---
+	SigningKeyID string `json:"signing_key_id"`
 }
 
 // CredentialOnly 报告该可信等级是否仅为“凭证已验证”。
 func (t *TrustedAttributionContext) CredentialOnly() bool {
 	return t.IdentityAssurance == IdentityAssuranceCredentialOnly
+}
+
+// Clone 返回可信归因上下文的深拷贝，避免调用者修改污染复用对象。
+func (t *TrustedAttributionContext) Clone() *TrustedAttributionContext {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	return &c
 }
 
 // 身份取得方式（identity_mode）。
@@ -189,6 +224,154 @@ func PurposeTypeValid(t string) bool {
 func SigningKeyStatusValid(status string) bool {
 	switch status {
 	case SigningKeyStatusActive, SigningKeyStatusRetiring, SigningKeyStatusRevoked:
+		return true
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// 第二批：企业协议 Header / Runtime Mode / 校验限制 / Redis Key
+// ---------------------------------------------------------------------------
+
+// 企业身份协议六个 Header（文档 7.2）。只有 DYNAMIC/HYBRID 使用；STATIC 不带。
+const (
+	AIHeaderContextVersion = "X-AI-Context-Version"
+	AIHeaderContext        = "X-AI-Context"
+	AIHeaderTimestamp      = "X-AI-Timestamp"
+	AIHeaderNonce          = "X-AI-Nonce"
+	AIHeaderKeyId          = "X-AI-Key-Id"
+	AIHeaderSignature      = "X-AI-Signature"
+)
+
+// AIHeaderNames 六个企业身份 Header 名。AIIdentityAuth 一进入就全部删除，
+// Channel Header Override（wildcard/regex/显式/{client_header}）一律不得把它们
+// 透传给上游 Provider。
+var AIHeaderNames = []string{
+	AIHeaderContextVersion,
+	AIHeaderContext,
+	AIHeaderTimestamp,
+	AIHeaderNonce,
+	AIHeaderKeyId,
+	AIHeaderSignature,
+}
+
+// IsAIAttributionHeader 判断 header 名是否为六个企业身份 Header 之一（大小写不敏感）。
+func IsAIAttributionHeader(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "x-ai-context-version", "x-ai-context", "x-ai-timestamp",
+		"x-ai-nonce", "x-ai-key-id", "x-ai-signature":
+		return true
+	}
+	return false
+}
+
+// 身份运行时模式（文档 7.8）。AI_ATTRIBUTION_MODE 默认 disabled；非法值 fail-closed。
+const (
+	AttributionModeDisabled = "disabled"
+	AttributionModeAudit    = "audit"
+	AttributionModeEnforce  = "enforce"
+)
+
+// Runtime 环境变量与校验边界（7.5 / 7.3 / 7.6）。
+const (
+	AttributionModeEnv          = "AI_ATTRIBUTION_MODE"
+	AttributionClockSkewEnv     = "AI_ATTRIBUTION_CLOCK_SKEW_SECONDS"
+	AttributionClockSkewMin     = 60
+	AttributionClockSkewMax     = 900
+	AttributionClockSkewDefault = 300
+
+	AttributionContextMaxEncoded = 8192
+	AttributionContextMaxDecoded = 6144
+	AttributionNonceMinLen       = 22
+	AttributionNonceMaxLen       = 64
+	AttributionNonceTTLSeconds   = 600
+	AttributionMaxExecutionDepth = 64
+	AttributionContextVersion    = "v1"
+)
+
+// Context 字段与 Redis Key 固定（7.3 / 7.6 / 6.15.1）。
+const (
+	ContextFieldRootRunID = "root_run_id"
+	ContextFieldRootAppID = "root_app_id"
+
+	IdentityNonceKeyPrefix       = "ai:identity:nonce:"
+	CredentialRateLimitKeyPrefix = "ai:credential:rate:"
+)
+
+// 身份来源（7.13 identity_source）。
+const (
+	IdentitySourceToken         = "TOKEN"          // 静态：由 Token/Profile 主数据决定
+	IdentitySourceSignedContext = "SIGNED_CONTEXT" // 动态：签名执行上下文
+	IdentitySourceHybrid        = "HYBRID"
+)
+
+// 第二批固定错误码（文档 7.19 / 冻结验收点 K）。以 AIErrorCode 表达，由中间件
+// 转换为 relaykit/types.ErrorCode 下发给 abortWithOpenAiMessage。
+type AIErrorCode string
+
+const (
+	AIIdentityProfileRequired                   AIErrorCode = "AI_IDENTITY_PROFILE_REQUIRED"
+	AIIdentityProfileDisabled                   AIErrorCode = "AI_IDENTITY_PROFILE_DISABLED"
+	AIIdentityContextRequired                   AIErrorCode = "AI_IDENTITY_CONTEXT_REQUIRED"
+	AIIdentityContextInvalid                    AIErrorCode = "AI_IDENTITY_CONTEXT_INVALID"
+	AIIdentityContextTooLarge                   AIErrorCode = "AI_IDENTITY_CONTEXT_TOO_LARGE"
+	AIIdentityNonceInvalid                      AIErrorCode = "AI_IDENTITY_NONCE_INVALID"
+	AIIdentityTimestampInvalid                  AIErrorCode = "AI_IDENTITY_TIMESTAMP_INVALID"
+	AIIdentityKeyInvalid                        AIErrorCode = "AI_IDENTITY_KEY_INVALID"
+	AIIdentitySignatureInvalid                  AIErrorCode = "AI_IDENTITY_SIGNATURE_INVALID"
+	AIIdentityReplayDetected                    AIErrorCode = "AI_IDENTITY_REPLAY_DETECTED"
+	AIIdentityPrincipalDisabled                 AIErrorCode = "AI_IDENTITY_PRINCIPAL_DISABLED"
+	AIIdentityPurposeDisabled                   AIErrorCode = "AI_IDENTITY_PURPOSE_DISABLED"
+	AIIdentityAppNotAllowed                     AIErrorCode = "AI_IDENTITY_APP_NOT_ALLOWED"
+	AIIdentityAppNotBound                       AIErrorCode = "AI_IDENTITY_APP_NOT_BOUND"
+	AIIdentityHybridAppMismatch                 AIErrorCode = "AI_IDENTITY_HYBRID_APP_MISMATCH"
+	AIIdentityAppDisabled                       AIErrorCode = "AI_IDENTITY_APP_DISABLED"
+	AIIdentityTargetInvalid                     AIErrorCode = "AI_IDENTITY_TARGET_INVALID"
+	AIIdentityAssuranceInvalid                  AIErrorCode = "AI_IDENTITY_ASSURANCE_INVALID"
+	AIIdentityPrincipalRequired                 AIErrorCode = "AI_IDENTITY_PRINCIPAL_REQUIRED"
+	AIIdentityPurposeRequired                   AIErrorCode = "AI_IDENTITY_PURPOSE_REQUIRED"
+	AIIdentityUsageTeamInvalid                  AIErrorCode = "AI_IDENTITY_USAGE_TEAM_INVALID"
+	AIIdentityDuplicateActivePersonalCredential AIErrorCode = "AI_IDENTITY_DUPLICATE_ACTIVE_PERSONAL_CREDENTIAL"
+	AIReplayStoreUnavailable                    AIErrorCode = "AI_REPLAY_STORE_UNAVAILABLE"
+	AICredentialRateLimitExceeded               AIErrorCode = "AI_CREDENTIAL_RATE_LIMIT_EXCEEDED"
+	AICredentialRateLimitStoreUnavailable       AIErrorCode = "AI_CREDENTIAL_RATE_LIMIT_STORE_UNAVAILABLE"
+	AIIdentityAttributionModeInvalid            AIErrorCode = "AI_ATTRIBUTION_MODE_INVALID"
+)
+
+// 身份审计 reason_code（写入 model.AIIdentityAuditEvent.ReasonCode，仅安全字段）。
+const (
+	ReasonCodeReplayStoreUnavailable            = "REPLAY_STORE_UNAVAILABLE"
+	ReasonCodeProfileRequired                   = "PROFILE_REQUIRED"
+	ReasonCodeProfileDisabled                   = "PROFILE_DISABLED"
+	ReasonCodePrincipalDisabled                 = "PRINCIPAL_DISABLED"
+	ReasonCodePurposeDisabled                   = "PURPOSE_DISABLED"
+	ReasonCodeAppNotAllowed                     = "APP_NOT_ALLOWED"
+	ReasonCodeAppNotBound                       = "APP_NOT_BOUND"
+	ReasonCodeHybridAppMismatch                 = "HYBRID_APP_MISMATCH"
+	ReasonCodeAppDisabled                       = "APP_DISABLED"
+	ReasonCodeContextRequired                   = "CONTEXT_REQUIRED"
+	ReasonCodeContextInvalid                    = "CONTEXT_INVALID"
+	ReasonCodeContextTooLarge                   = "CONTEXT_TOO_LARGE"
+	ReasonCodeNonceInvalid                      = "NONCE_INVALID"
+	ReasonCodeTimestampInvalid                  = "TIMESTAMP_INVALID"
+	ReasonCodeKeyInvalid                        = "KEY_INVALID"
+	ReasonCodeSignatureInvalid                  = "SIGNATURE_INVALID"
+	ReasonCodeReplayDetected                    = "REPLAY_DETECTED"
+	ReasonCodeIdentityModeInvalid               = "IDENTITY_MODE_INVALID"
+	ReasonCodeStoreUnavailable                  = "STORE_UNAVAILABLE"
+	ReasonCodeAttributionModeInvalid            = "ATTRIBUTION_MODE_INVALID"
+	ReasonCodePrincipalRequired                 = "PRINCIPAL_REQUIRED"
+	ReasonCodePurposeRequired                   = "PURPOSE_REQUIRED"
+	ReasonCodeUsageTeamInvalid                  = "USAGE_TEAM_INVALID"
+	ReasonCodeAssuranceInvalid                  = "ASSURANCE_INVALID"
+	ReasonCodeTargetInvalid                     = "TARGET_INVALID"
+	ReasonCodeDuplicateActivePersonalCredential = "DUPLICATE_ACTIVE_PERSONAL_CREDENTIAL"
+)
+
+// AttributionModeValid 校验 AI_ATTRIBUTION_MODE 是否合法。
+func AttributionModeValid(mode string) bool {
+	switch mode {
+	case AttributionModeDisabled, AttributionModeAudit, AttributionModeEnforce:
 		return true
 	}
 	return false

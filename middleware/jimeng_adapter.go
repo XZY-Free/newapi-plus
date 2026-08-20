@@ -14,6 +14,10 @@ import (
 
 func JimengRequestConvert() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		// 为 AIIdentityAuth 的 canonical 签名保留外部入站 method/path（文档 7.4 / 7.18）。
+		c.Set(string(constant.ContextKeyAIOriginalMethod), c.Request.Method)
+		c.Set(string(constant.ContextKeyAIOriginalPath), c.Request.URL.Path)
+
 		action := c.Query("Action")
 		if action == "" {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, "Action query parameter is required")

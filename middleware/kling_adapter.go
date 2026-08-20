@@ -13,6 +13,10 @@ import (
 
 func KlingRequestConvert() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		// 为 AIIdentityAuth 的 canonical 签名保留外部入站 method/path（文档 7.4 / 7.18）。
+		c.Set(string(constant.ContextKeyAIOriginalMethod), c.Request.Method)
+		c.Set(string(constant.ContextKeyAIOriginalPath), c.Request.URL.Path)
+
 		var originalReq map[string]interface{}
 		if err := common.UnmarshalBodyReusable(c, &originalReq); err != nil {
 			c.Next()
