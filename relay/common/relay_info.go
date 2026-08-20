@@ -164,6 +164,11 @@ type RelayInfo struct {
 
 	Request dto.Request
 
+	// Attribution 是当前请求的可信归因快照（冻结方案 V1.1 8.2）。
+	// genBaseRelayInfo 从 Gin Context 的 Trusted Context 克隆一份，独立于原对象；
+	// 调用者修改原 Trusted Context 不影响本字段。无 Trusted Context 时为 nil。
+	Attribution *constant.TrustedAttributionContext
+
 	// RequestConversionChain records request format conversions in order, e.g.
 	// ["openai", "openai_responses"] or ["openai", "claude"].
 	RequestConversionChain []types.RelayFormat
@@ -535,6 +540,11 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 			//promptTokens: common.GetContextKeyInt(c, constant.ContextKeyPromptTokens),
 			estimatePromptTokens: common.GetContextKeyInt(c, constant.ContextKeyEstimatedTokens),
 		},
+	}
+
+	// 克隆可信归因快照：独立于原 Trusted Context，避免后续修改污染 RelayInfo。
+	if trusted, ok := common.GetTrustedAttribution(c); ok {
+		info.Attribution = trusted.Clone()
 	}
 
 	if info.RelayMode == relayconstant.RelayModeUnknown {

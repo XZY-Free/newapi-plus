@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -279,12 +280,172 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 可信归因日志快照（冻结方案 V1.1 第 8 章）
+//
+// buildTrustedAttributionSnapshot 从可信归因上下文显式 allowlist 构造
+// Other["ai_attribution"] 快照 map。严格按 V1.1 8.3 与 constant.TrustedAttributionContext
+// 的字段清单手工写出，绝不通过反射 / 整体 JSON marshal 偷带未来字段，也绝不携带
+// API Key / Signing Secret / Signature / Nonce / 原始 Context。
+//
+// 通用字段始终写出（含 false、0、空 failure_reason）；弱身份 / 强身份专属字段
+// 仅在值非空 / 非零时写出。
+// ---------------------------------------------------------------------------
+func buildTrustedAttributionSnapshot(t *constant.TrustedAttributionContext) map[string]interface{} {
+	if t == nil {
+		return nil
+	}
+	a := make(map[string]interface{}, 48)
+
+	// --- 通用字段（始终写出） ---
+	a["profile_id"] = t.ProfileID
+	a["token_id"] = t.TokenID
+	a["environment"] = t.Environment
+	a["identity_mode"] = t.IdentityMode
+	a["attribution_target_type"] = t.AttributionTarget
+	a["identity_assurance"] = t.IdentityAssurance
+	a["identity_source"] = t.IdentitySource
+	a["identity_verified"] = t.IdentityVerified
+	a["credential_verified"] = t.CredentialVerified
+	a["client_verified"] = t.ClientVerified
+	a["failure_reason"] = t.FailureReason
+
+	// --- 弱身份个人字段（仅有值时） ---
+	if t.PrincipalID != 0 {
+		a["principal_id"] = t.PrincipalID
+	}
+	if t.PrincipalCode != "" {
+		a["principal_code"] = t.PrincipalCode
+	}
+	if t.PrincipalName != "" {
+		a["principal_name"] = t.PrincipalName
+	}
+	if t.CredentialPurposeID != 0 {
+		a["credential_purpose_id"] = t.CredentialPurposeID
+	}
+	if t.CredentialPurposeCode != "" {
+		a["credential_purpose_code"] = t.CredentialPurposeCode
+	}
+	if t.CredentialPurposeName != "" {
+		a["credential_purpose_name"] = t.CredentialPurposeName
+	}
+	if t.UsageBusinessDomainID != 0 {
+		a["usage_business_domain_id"] = t.UsageBusinessDomainID
+	}
+	if t.UsageBusinessDomainCode != "" {
+		a["usage_business_domain_code"] = t.UsageBusinessDomainCode
+	}
+	if t.UsageBusinessDomainName != "" {
+		a["usage_business_domain_name"] = t.UsageBusinessDomainName
+	}
+	if t.UsageTeamID != 0 {
+		a["usage_team_id"] = t.UsageTeamID
+	}
+	if t.UsageTeamCode != "" {
+		a["usage_team_code"] = t.UsageTeamCode
+	}
+	if t.UsageTeamName != "" {
+		a["usage_team_name"] = t.UsageTeamName
+	}
+
+	// --- 强身份 Caller（仅有值时） ---
+	if t.CallerID != "" {
+		a["caller_id"] = t.CallerID
+	}
+	if t.CallerName != "" {
+		a["caller_name"] = t.CallerName
+	}
+
+	// --- 应用归因（仅有值时） ---
+	if t.RootAppID != "" {
+		a["root_app_id"] = t.RootAppID
+	}
+	if t.RootAppName != "" {
+		a["root_app_name"] = t.RootAppName
+	}
+	if t.ApplicationBusinessDomainID != 0 {
+		a["application_business_domain_id"] = t.ApplicationBusinessDomainID
+	}
+	if t.ApplicationBusinessDomainCode != "" {
+		a["application_business_domain_code"] = t.ApplicationBusinessDomainCode
+	}
+	if t.ApplicationBusinessDomainName != "" {
+		a["application_business_domain_name"] = t.ApplicationBusinessDomainName
+	}
+	if t.OwnerTeamID != 0 {
+		a["owner_team_id"] = t.OwnerTeamID
+	}
+	if t.OwnerTeamCode != "" {
+		a["owner_team_code"] = t.OwnerTeamCode
+	}
+	if t.OwnerTeamName != "" {
+		a["owner_team_name"] = t.OwnerTeamName
+	}
+
+	// --- 执行（仅有值时） ---
+	if t.RootRunID != "" {
+		a["root_run_id"] = t.RootRunID
+	}
+	if t.CurrentExecutionID != "" {
+		a["current_execution_id"] = t.CurrentExecutionID
+	}
+	if t.ParentExecutionID != "" {
+		a["parent_execution_id"] = t.ParentExecutionID
+	}
+	if t.ExecutionType != "" {
+		a["execution_type"] = t.ExecutionType
+	}
+	if t.ExecutionDepth != 0 {
+		a["execution_depth"] = t.ExecutionDepth
+	}
+	if t.WorkflowID != "" {
+		a["workflow_id"] = t.WorkflowID
+	}
+	if t.AgentID != "" {
+		a["agent_id"] = t.AgentID
+	}
+	if t.TaskID != "" {
+		a["task_id"] = t.TaskID
+	}
+	if t.NodeID != "" {
+		a["node_id"] = t.NodeID
+	}
+
+	// --- 签名元数据（仅有值时） ---
+	if t.SigningKeyID != "" {
+		a["signing_key_id"] = t.SigningKeyID
+	}
+
+	return a
+}
+
+// applyTrustedAttribution 将可信归因快照整块写入 other["ai_attribution"]，
+// 覆盖上游可能伪造的同名值。无 Trusted Context 时不生成该字段（legacy 语义）。
+// nil Other 会安全处理并返回可写 map。
+func applyTrustedAttribution(c *gin.Context, other map[string]interface{}) map[string]interface{} {
+	trusted, ok := common.GetTrustedAttribution(c)
+	if !ok {
+		return other
+	}
+	snap := buildTrustedAttributionSnapshot(trusted)
+	if snap == nil {
+		return other
+	}
+	if other == nil {
+		other = make(map[string]interface{})
+	}
+	other["ai_attribution"] = snap
+	return other
+}
+
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, other map[string]interface{}) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	// 注入可信归因快照（整块覆盖伪造值），并支持 nil Other。
+	other = applyTrustedAttribution(c, other)
 	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -344,6 +505,9 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if !common.LogConsumeEnabled {
 		return
 	}
+	// 在日志序列化之前覆盖伪造 ai_attribution，避免测试秘密进入后端日志。
+	// 同时兼容 nil Other。
+	params.Other = applyTrustedAttribution(c, params.Other)
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
