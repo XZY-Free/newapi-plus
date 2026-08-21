@@ -13,8 +13,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/relay/tracing"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"golang.org/x/net/proxy"
 )
@@ -99,6 +102,11 @@ func newRelayHTTPTransport() *http.Transport {
 }
 
 func newRelayHTTPClient(transport http.RoundTripper) *http.Client {
+	// 仅当 OTel 启用时用 otelhttp 包装基础 RoundTripper（§9.15）。
+	// otelhttp 只委托给原 Transport，保留 Proxy/TLS/HTTP2/Shards/Pool/Redirect/Timeout 行为。
+	if tracing.IsEnabled() {
+		transport = otelhttp.NewTransport(transport)
+	}
 	client := &http.Client{
 		Transport:     transport,
 		CheckRedirect: checkRedirect,

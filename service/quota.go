@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/tracing"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -228,6 +229,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
+	// 记录 GenAI Span 的最终结算事实（§9.7）。RealtimeUsage 无 BillingUsage，
+	// 按其 InputTokens/OutputTokens 构造 OpenAI 语义的归一化 Usage。
+	tracing.RecordBillingFacts(ctx.Request.Context(), &dto.BillingUsage{
+		Semantic:    dto.BillingUsageSemanticOpenAI,
+		OpenAIUsage: &dto.Usage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens},
+	}, int64(quota))
 	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
@@ -351,6 +358,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
+	// 记录 GenAI Span 的最终结算事实（§9.7）。音频路径使用带归一化 BillingUsage 的 Usage。
+	tracing.RecordBillingFacts(ctx.Request.Context(), usage.BillingUsage, int64(quota))
 	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}

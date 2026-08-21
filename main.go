@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/oauth"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/relay/tracing"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
@@ -188,6 +189,8 @@ func main() {
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())
+	// OTel Server Span 放置在 RequestId 之后、路由/TokenAuth 之前（§9.6）
+	server.Use(tracing.ServerMiddleware())
 	server.Use(middleware.Version())
 	server.Use(middleware.I18n())
 	middleware.SetUpLogger(server)
@@ -231,6 +234,8 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
 	}
+	// 关闭 OTel，受同一 shutdown timeout 控制（§9.4）
+	tracing.Shutdown(ctx)
 	// 内存中的看板数据保存入库，避免重启丢失未落库数据 (issue #5679)
 	if common.DataExportEnabled {
 		model.SaveQuotaDataCache()
@@ -295,6 +300,12 @@ func InitResources() error {
 	common.InitEnv()
 
 	logger.SetupLogger()
+
+	// Initialize OpenTelemetry（§9.4：环境变量与 Logger 初始化后、HTTP Server 接收请求前）
+	if err := tracing.Init(context.Background()); err != nil {
+		common.FatalLog("failed to initialize OpenTelemetry: " + err.Error())
+		return err
+	}
 
 	// Initialize model settings
 	ratio_setting.InitRatioSettings()

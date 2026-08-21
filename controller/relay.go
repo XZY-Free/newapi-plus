@@ -20,6 +20,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/tracing"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -190,6 +191,26 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+
+	// GenAI logical CLIENT Span 包裹整个 Channel Retry 生命周期（V1.1 §9.7）。
+	// 使用 defer 结束，保证成功路径的 return 与失败路径都能正常收尾。
+	// 最终 Usage/Quota 由 Handler 在结算汇聚点写入 BillingFacts，span.End 读取。
+	genAISpan, spanCtx := tracing.StartGenAISpan(c.Request.Context(),
+		tracing.OperationName(relayInfo.RelayMode),
+		tracing.ProviderName(relayInfo.ChannelType),
+		relayInfo.OriginModelName,
+		requestId)
+	// 让出站请求与结算汇聚点继承 GenAI Span 的 context（含 BillingFacts）。
+	c.Request = c.Request.WithContext(spanCtx)
+	defer func() {
+		var ttfc time.Duration
+		var hasTTFC bool
+		if !relayInfo.FirstResponseTime.IsZero() {
+			ttfc = relayInfo.FirstResponseTime.Sub(relayInfo.StartTime)
+			hasTTFC = ttfc > 0
+		}
+		genAISpan.End(nil, 0, ttfc, hasTTFC, newAPIError, relayInfo.Attribution)
+	}()
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()

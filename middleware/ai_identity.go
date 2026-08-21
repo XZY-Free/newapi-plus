@@ -6,11 +6,27 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/tracing"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	newtypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// attachIdentityAttribution 保存可信归因快照，并将企业身份属性附加到当前 server span（§9.6）。
+// OTel 未启用或 Span 未采样时 SetAttributes 为空操作，不改变认证语义。
+func attachIdentityAttribution(c *gin.Context, ctx *constant.TrustedAttributionContext) {
+	common.SetTrustedAttribution(c, ctx)
+	if ctx == nil {
+		return
+	}
+	if attrs := tracing.EnterpriseAttributes(ctx); len(attrs) > 0 {
+		if span := trace.SpanFromContext(c.Request.Context()); span.IsRecording() {
+			span.SetAttributes(attrs...)
+		}
+	}
+}
 
 // identityHeaders 是六个企业身份 Header 的原始取值（文档 7.2）。AIIdentityAuth 一进入
 // 就复制并全部删除（文档 7.14），保证任何模式、任何跳过路由、任何 c.Next() 之前都
@@ -99,7 +115,7 @@ func AIIdentityAuth() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusUnauthorized, "缺少有效的 API Key", relaytypes.ErrorCode(constant.AIIdentityProfileRequired))
 				return
 			}
-			common.SetTrustedAttribution(c, degradedTokenContext(0))
+			attachIdentityAttribution(c, degradedTokenContext(0))
 			c.Next()
 			return
 		}
@@ -120,7 +136,7 @@ func AIIdentityAuth() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "身份快照不可用", relaytypes.ErrorCode(constant.AIIdentityProfileRequired))
 				return
 			}
-			common.SetTrustedAttribution(c, degradedTokenContext(tokenID))
+			attachIdentityAttribution(c, degradedTokenContext(tokenID))
 			c.Next()
 			return
 		}
@@ -195,7 +211,7 @@ func handleProfileMissing(c *gin.Context, mode string, tokenID int) {
 		abortWithOpenAiMessage(c, http.StatusForbidden, "Token 未登记企业身份 Profile", relaytypes.ErrorCode(constant.AIIdentityProfileRequired))
 		return
 	}
-	common.SetTrustedAttribution(c, degradedTokenContext(tokenID))
+	attachIdentityAttribution(c, degradedTokenContext(tokenID))
 	c.Next()
 }
 
@@ -214,7 +230,7 @@ func handleProfileDisabled(c *gin.Context, mode string, snapshot *newtypes.Ident
 		abortWithOpenAiMessage(c, http.StatusForbidden, "Identity Profile 已停用", relaytypes.ErrorCode(constant.AIIdentityProfileDisabled))
 		return
 	}
-	common.SetTrustedAttribution(c, degradedProfileContext(snapshot, constant.ReasonCodeProfileDisabled))
+	attachIdentityAttribution(c, degradedProfileContext(snapshot, constant.ReasonCodeProfileDisabled))
 	c.Next()
 }
 
@@ -233,7 +249,7 @@ func handleIdentityModeInvalid(c *gin.Context, mode string, snapshot *newtypes.I
 		abortWithOpenAiMessage(c, http.StatusForbidden, "Identity Profile 身份模式非法", relaytypes.ErrorCode(constant.AIIdentityProfileDisabled))
 		return
 	}
-	common.SetTrustedAttribution(c, degradedProfileContext(snapshot, constant.ReasonCodeIdentityModeInvalid))
+	attachIdentityAttribution(c, degradedProfileContext(snapshot, constant.ReasonCodeIdentityModeInvalid))
 	c.Next()
 }
 
@@ -288,7 +304,7 @@ func handleSnapshotInvalid(c *gin.Context, mode string, snapshot *newtypes.Ident
 		abortWithOpenAiMessage(c, http.StatusForbidden, failure.message, relaytypes.ErrorCode(failure.code))
 		return
 	}
-	common.SetTrustedAttribution(c, degradedProfileContext(snapshot, failure.reason))
+	attachIdentityAttribution(c, degradedProfileContext(snapshot, failure.reason))
 	c.Next()
 }
 
@@ -336,7 +352,7 @@ func handleStaticAttribution(c *gin.Context, mode string, snapshot *newtypes.Ide
 		// audit 降级：清除被停用实体相关的归因，identity/client 均 false。
 		clearDisabledAttribution(ctx, failure.reason)
 	}
-	common.SetTrustedAttribution(c, ctx)
+	attachIdentityAttribution(c, ctx)
 	c.Next()
 }
 
@@ -473,11 +489,11 @@ func handleSignedAttribution(c *gin.Context, mode string, hdr identityHeaders, s
 			RequestPath:         c.Request.URL.Path,
 			ClientIp:            c.ClientIP(),
 		})
-		common.SetTrustedAttribution(c, degradedProfileContext(snapshot, failure.reason))
+		attachIdentityAttribution(c, degradedProfileContext(snapshot, failure.reason))
 		c.Next()
 		return
 	}
-	common.SetTrustedAttribution(c, ctx)
+	attachIdentityAttribution(c, ctx)
 	c.Next()
 }
 
@@ -578,7 +594,7 @@ func handleIdentityRedisDown(c *gin.Context, mode string, snapshot *newtypes.Ide
 		return
 	}
 	// audit 降级：仅保留由 Token/Profile 静态确定的事实，identity_verified=false。
-	common.SetTrustedAttribution(c, degradedProfileContext(snapshot, constant.ReasonCodeReplayStoreUnavailable))
+	attachIdentityAttribution(c, degradedProfileContext(snapshot, constant.ReasonCodeReplayStoreUnavailable))
 	c.Next()
 }
 
