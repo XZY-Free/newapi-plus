@@ -59,6 +59,7 @@ export function MasterDataSelect<T>({
   fetchPage,
   itemToValue,
   itemToLabel,
+  itemToDescription,
   defaultLabel,
   placeholder,
   emptyText,
@@ -73,6 +74,8 @@ export function MasterDataSelect<T>({
   fetchPage: (params: MasterDataFetchParams) => Promise<PagedResult<T>>
   itemToValue: (item: T) => number
   itemToLabel: (item: T) => string
+  /** 可选次要描述行，渲染在候选标签下方（如 Token ID），用于消歧同名校标。 */
+  itemToDescription?: (item: T) => ReactNode
   defaultLabel?: string
   placeholder: string
   emptyText: string
@@ -212,7 +215,14 @@ export function MasterDataSelect<T>({
                       value === itemValue ? 'opacity-100' : 'opacity-0'
                     )}
                   />
-                  <span className='truncate'>{itemToLabel(item)}</span>
+                  <span className='flex min-w-0 flex-col'>
+                    <span className='truncate'>{itemToLabel(item)}</span>
+                    {itemToDescription && (
+                      <span className='text-muted-foreground truncate text-xs'>
+                        {itemToDescription(item)}
+                      </span>
+                    )}
+                  </span>
                 </CommandItem>
               )
             })}

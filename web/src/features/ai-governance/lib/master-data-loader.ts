@@ -57,6 +57,9 @@ export function useMasterDataOptions<T>({
     queryFn: ({ pageParam }) =>
       fetchPage({ page: pageParam, page_size: pageSize, keyword }),
     getNextPageParam: (lastPage, allPages) => {
+      // React Query 会在首页解析前对乐观结果调用 getNextPageParam（此时 lastPage 为
+      // undefined）。防御性短路，避免 in-flight 状态下读取 lastPage.items 抛错。
+      if (!lastPage) return undefined
       const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0)
       return loaded < lastPage.total ? allPages.length + 1 : undefined
     },

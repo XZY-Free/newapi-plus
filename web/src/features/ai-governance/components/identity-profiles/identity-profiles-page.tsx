@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Circle, CircleOff } from 'lucide-react'
+import { Circle, CircleOff, Pencil, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -28,6 +28,9 @@ import { DataTablePage, useDataTable } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 import { Button } from '@/components/ui/button'
+import {
+  Sheet,
+} from '@/components/ui/sheet'
 import { useMediaQuery } from '@/hooks'
 import { formatTimestamp } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -42,6 +45,7 @@ import type {
 } from '../../types'
 import { EnabledBadge } from '../enabled-badge'
 import { TokenSelect } from '../token-select'
+import { IdentityProfileForm } from './identity-profile-form'
 
 function modeVariant(mode: IdentityMode): 'neutral' | 'info' | 'warning' {
   if (mode === 'STATIC') return 'neutral'
@@ -78,9 +82,31 @@ export function IdentityProfilesPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1)
 
-  // 停用/启用确认弹窗状态（C.1 仅启停，编辑/详情后续子批接入）
+  // 停用/启用确认弹窗状态（C.1 仅启停，C.2 接入编辑）
   const [toggleRow, setToggleRow] = useState<GovernanceIdentityProfileDetail | null>(null)
   const [isToggling, setIsToggling] = useState(false)
+
+  // 创建 / 普通编辑抽屉（C.2）：共用同一套 IdentityProfileForm。
+  const queryClient = useQueryClient()
+  const [formOpen, setFormOpen] = useState<'create' | 'edit' | null>(null)
+  const [editRow, setEditRow] = useState<GovernanceIdentityProfileDetail | null>(null)
+
+  const openCreate = () => {
+    setEditRow(null)
+    setFormOpen('create')
+  }
+  const openEdit = (detail: GovernanceIdentityProfileDetail) => {
+    setEditRow(detail)
+    setFormOpen('edit')
+  }
+  const handleFormSuccess = () => {
+    setFormOpen(null)
+    // 创建成功后失效对应 token 的重复探测缓存，并刷新列表。
+    void queryClient.invalidateQueries({
+      queryKey: ['ai-governance', 'token-profile-exists'],
+    })
+    triggerRefresh()
+  }
 
   const handleTokenFilterChange = (value: number | null) => {
     setTokenIdFilter(value)
@@ -225,6 +251,15 @@ export function IdentityProfilesPage() {
               type='button'
               variant='ghost'
               size='icon'
+              onClick={() => openEdit(detail)}
+              aria-label={t('Edit')}
+            >
+              <Pencil className='size-4' />
+            </Button>
+            <Button
+              type='button'
+              variant='ghost'
+              size='icon'
               onClick={() => setToggleRow(detail)}
               aria-label={t(enabled ? 'Disable' : 'Enable')}
             >
@@ -309,10 +344,14 @@ export function IdentityProfilesPage() {
 
   return (
     <>
-      <div className='mb-4'>
+      <div className='mb-4 flex flex-wrap items-center justify-between gap-3'>
         <p className='max-w-2xl text-sm text-muted-foreground'>
           {t('API Key identity binds a NewAPI token to a governed identity profile. Search matches the caller ID or caller name.')}
         </p>
+        <Button size='sm' onClick={openCreate}>
+          <Plus className='size-4' />
+          {t('Add Identity Profile')}
+        </Button>
       </div>
 
       <div className='mb-3 flex flex-wrap items-center gap-2'>
@@ -395,6 +434,22 @@ export function IdentityProfilesPage() {
         handleConfirm={handleToggle}
         isLoading={isToggling}
       />
+
+      <Sheet
+        open={formOpen !== null}
+        onOpenChange={(v) => {
+          if (!v) setFormOpen(null)
+        }}
+      >
+        {formOpen !== null && (
+          <IdentityProfileForm
+            key={`${formOpen}-${editRow?.profile.id ?? 'new'}`}
+            mode={formOpen}
+            currentDetail={editRow}
+            onSuccess={handleFormSuccess}
+          />
+        )}
+      </Sheet>
     </>
   )
 }

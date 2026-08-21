@@ -30,6 +30,11 @@ type TokenSelectProps = {
   defaultLabel?: string
   disabled?: boolean
   className?: string
+  /**
+   * 创建表单用：候选须可唯一辨识。开启后在下拉候选中额外显示
+   * `Token ID: <id>`，用于区分同名 Token。仅展示元数据，绝不读明文。
+   */
+  showTokenId?: boolean
 }
 
 /**
@@ -38,8 +43,8 @@ type TokenSelectProps = {
  * 复用 §11-B 冻结的 `MasterDataSelect`（异步搜索 + 分页加载），数据源仅
  * `getApiKeys` / `searchApiKeys` **元数据**能力——绝不得调用
  * `fetchTokenKey` / `fetchTokenKeysBatch`（那是拉取明文 Key 的入口）。
- * 本选择器只展示 token 的 `name`，从不渲染 `key`，因此 Identity Governance
- * 页面不会读取到任何 API Key 明文。
+ * 本选择器只展示 token 的 `name`（`showTokenId` 时另显 Token ID），从不渲染
+ * `key`，因此 Identity Governance 页面不会读取到任何 API Key 明文。
  */
 export function TokenSelect(props: TokenSelectProps) {
   const { t } = useTranslation()
@@ -62,6 +67,11 @@ export function TokenSelect(props: TokenSelectProps) {
       }}
       itemToValue={(item) => item.id}
       itemToLabel={(item) => item.name}
+      itemToDescription={
+        props.showTokenId
+          ? (item) => `${t('Token ID')}: ${item.id}`
+          : undefined
+      }
       placeholder={t('Select API key')}
       emptyText={t('No API Keys Found')}
     />
