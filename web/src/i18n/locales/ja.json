@@ -5488,6 +5488,25 @@
     "This AI application will no longer be selectable. Existing references are preserved.": "この AI アプリは選択できなくなります。既存の参照は保持されます。",
     "Business Domain": "ビジネスドメイン",
     "Usage Team": "使用チーム",
-    "Owner Team": "担当チーム"
+    "Owner Team": "担当チーム",
+    "Identity Mode": "アイデンティティモード",
+    "Attribution Target": "帰属ターゲット",
+    "Identity Assurance": "アイデンティティ保証レベル",
+    "Environment": "環境",
+    "Risk": "リスク",
+    "Principal": "プリンシパル",
+    "Credential Purpose": "クレデンシャル用途",
+    "Token ID": "トークンID",
+    "Select API key": "APIキーを選択",
+    "Search by caller ID or caller name...": "呼び出し元IDまたは名前で検索...",
+    "No identity profiles found": "アイデンティティプロファイルが見つかりません",
+    "No identity profiles match the current search and filters.": "現在の検索とフィルターに一致するアイデンティティプロファイルはありません。",
+    "Identity profile enabled": "アイデンティティプロファイルが有効になりました",
+    "Identity profile disabled": "アイデンティティプロファイルが無効になりました",
+    "Disable this identity profile?": "このアイデンティティプロファイルを無効にしますか？",
+    "Enable this identity profile?": "このアイデンティティプロファイルを有効にしますか？",
+    "This profile will no longer be used for identity attribution. Existing references are preserved.": "このプロファイルはアイデンティティ帰属に使用されなくなります。既存の参照は保持されます。",
+    "This profile will be used for identity attribution.": "このプロファイルはアイデンティティ帰属に使用されます。",
+    "API Key identity binds a NewAPI token to a governed identity profile. Search matches the caller ID or caller name.": "APIキーのアイデンティティはNewAPIトークンを管理対象のアイデンティティプロファイルにバインドします。検索は呼び出し元IDまたは名前で一致します。"
   }
 }

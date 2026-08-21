@@ -5488,6 +5488,25 @@
     "This AI application will no longer be selectable. Existing references are preserved.": "此 AI 應用將不再可選。現有參照將保留。",
     "Business Domain": "業務領域",
     "Usage Team": "使用團隊",
-    "Owner Team": "負責團隊"
+    "Owner Team": "負責團隊",
+    "Identity Mode": "身分模式",
+    "Attribution Target": "歸因目標",
+    "Identity Assurance": "身分可信等級",
+    "Environment": "環境",
+    "Risk": "風險",
+    "Principal": "使用主體",
+    "Credential Purpose": "憑證用途",
+    "Token ID": "令牌 ID",
+    "Select API key": "選擇 API 金鑰",
+    "Search by caller ID or caller name...": "依呼叫端 ID 或呼叫端名稱搜尋...",
+    "No identity profiles found": "找不到身分設定檔",
+    "No identity profiles match the current search and filters.": "沒有身分設定檔符合目前的搜尋與篩選。",
+    "Identity profile enabled": "身分設定檔已啟用",
+    "Identity profile disabled": "身分設定檔已停用",
+    "Disable this identity profile?": "停用此身分設定檔？",
+    "Enable this identity profile?": "啟用此身分設定檔？",
+    "This profile will no longer be used for identity attribution. Existing references are preserved.": "此設定檔將不再用於身分歸因。既有參照將被保留。",
+    "This profile will be used for identity attribution.": "此設定檔將用於身分歸因。",
+    "API Key identity binds a NewAPI token to a governed identity profile. Search matches the caller ID or caller name.": "API Key 身分將 NewAPI 令牌繫結到受治理的身分設定檔。搜尋符合呼叫端 ID 或呼叫端名稱。"
   }
 }

@@ -5488,6 +5488,25 @@
     "This AI application will no longer be selectable. Existing references are preserved.": "Это AI-приложение больше не будет доступно для выбора. Существующие ссылки сохраняются.",
     "Business Domain": "Бизнес-домен",
     "Usage Team": "Команда использования",
-    "Owner Team": "Команда-владелец"
+    "Owner Team": "Команда-владелец",
+    "Identity Mode": "Режим идентификации",
+    "Attribution Target": "Цель атрибуции",
+    "Identity Assurance": "Уровень подтверждения идентификации",
+    "Environment": "Окружение",
+    "Risk": "Риск",
+    "Principal": "Субъект",
+    "Credential Purpose": "Назначение учётных данных",
+    "Token ID": "ID токена",
+    "Select API key": "Выберите API-ключ",
+    "Search by caller ID or caller name...": "Поиск по ID или имени вызывающего...",
+    "No identity profiles found": "Профили идентификации не найдены",
+    "No identity profiles match the current search and filters.": "Нет профилей идентификации, соответствующих текущему поиску и фильтрам.",
+    "Identity profile enabled": "Профиль идентификации включён",
+    "Identity profile disabled": "Профиль идентификации отключён",
+    "Disable this identity profile?": "Отключить этот профиль идентификации?",
+    "Enable this identity profile?": "Включить этот профиль идентификации?",
+    "This profile will no longer be used for identity attribution. Existing references are preserved.": "Этот профиль больше не будет использоваться для атрибуции идентификации. Существующие ссылки сохраняются.",
+    "This profile will be used for identity attribution.": "Этот профиль будет использоваться для атрибуции идентификации.",
+    "API Key identity binds a NewAPI token to a governed identity profile. Search matches the caller ID or caller name.": "Идентичность API-ключа привязывает токен NewAPI к управляемому профилю идентификации. Поиск соответствует ID или имени вызывающего."
   }
 }

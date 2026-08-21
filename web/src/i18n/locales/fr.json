@@ -5488,6 +5488,25 @@
     "This AI application will no longer be selectable. Existing references are preserved.": "Cette application d’IA ne sera plus sélectionnable. Les références existantes sont conservées.",
     "Business Domain": "Domaine d’activité",
     "Usage Team": "Équipe d’usage",
-    "Owner Team": "Équipe responsable"
+    "Owner Team": "Équipe responsable",
+    "Identity Mode": "Mode d'identité",
+    "Attribution Target": "Cible d'attribution",
+    "Identity Assurance": "Niveau d'assurance d'identité",
+    "Environment": "Environnement",
+    "Risk": "Risque",
+    "Principal": "Principal",
+    "Credential Purpose": "Objet de la clé",
+    "Token ID": "ID du jeton",
+    "Select API key": "Sélectionner une clé API",
+    "Search by caller ID or caller name...": "Rechercher par ID ou nom d'appelant...",
+    "No identity profiles found": "Aucun profil d'identité trouvé",
+    "No identity profiles match the current search and filters.": "Aucun profil d'identité ne correspond à la recherche et aux filtres actuels.",
+    "Identity profile enabled": "Profil d'identité activé",
+    "Identity profile disabled": "Profil d'identité désactivé",
+    "Disable this identity profile?": "Désactiver ce profil d'identité ?",
+    "Enable this identity profile?": "Activer ce profil d'identité ?",
+    "This profile will no longer be used for identity attribution. Existing references are preserved.": "Ce profil ne sera plus utilisé pour l'attribution d'identité. Les références existantes sont conservées.",
+    "This profile will be used for identity attribution.": "Ce profil sera utilisé pour l'attribution d'identité.",
+    "API Key identity binds a NewAPI token to a governed identity profile. Search matches the caller ID or caller name.": "L'identité de la clé API lie un jeton NewAPI à un profil d'identité gouverné. La recherche porte sur l'ID ou le nom de l'appelant."
   }
 }
