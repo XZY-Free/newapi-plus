@@ -49,6 +49,13 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
+	// 单 NewAPI User 下的任务访问边界（§10.6/§10.7）。被拒绝时返回 404，
+	// 避免向未授权凭证泄露任务存在性。
+	if allowed, _ := service.CanAccessTask(loadIdentitySnapshot(c), task); !allowed {
+		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
+		return
+	}
+
 	if task.Status != model.TaskStatusSuccess {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error",
 			fmt.Sprintf("Task is not completed yet, current status: %s", task.Status))

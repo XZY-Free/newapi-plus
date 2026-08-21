@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -54,10 +55,32 @@ func GetUserTask(c *gin.Context) {
 	}
 
 	items := model.TaskGetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
+
+	// 单 NewAPI User 下的任务访问边界（§10.6/§10.7）：按当前凭证快照过滤，
+	// 而非仅凭 user_id。归因治理未启用时 FilterTasksByAttribution 原样返回。
+	snap := loadIdentitySnapshot(c)
+	items = service.FilterTasksByAttribution(snap, items)
 	total := model.TaskCountAllUserTask(userId, queryParams)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, false))
 	common.ApiSuccess(c, pageInfo)
+}
+
+// loadIdentitySnapshot 从当前请求上下文取出 token_id 并加载其 IdentitySnapshot。
+// 归因治理未启用或无 token 时返回 nil（调用方按 Legacy/disabled 语义处理）。
+func loadIdentitySnapshot(c *gin.Context) *types.IdentitySnapshot {
+	if service.GetAttributionMode() == constant.AttributionModeDisabled {
+		return nil
+	}
+	tokenID := c.GetInt("token_id")
+	if tokenID <= 0 {
+		return nil
+	}
+	snap, err := service.GetIdentitySnapshotByTokenID(tokenID)
+	if err != nil {
+		return nil
+	}
+	return snap
 }
 
 func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {

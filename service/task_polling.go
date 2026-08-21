@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/tracing"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -453,6 +454,18 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+
+	// 后台 Span（§10.5）：用提交阶段持久化的 W3C Trace Context 建立 Span Link，
+	// 重新附加企业归因属性；OTel 未启用时返回 no-op span 与同 ctx。
+	traceParent, traceState := "", ""
+	if tc := task.PrivateData.TraceContext; tc != nil {
+		traceParent = tc.TraceParent
+		traceState = tc.TraceState
+	}
+	bgSpan, spanCtx := tracing.StartBackgroundTaskSpan(ctx, "async.task.poll", traceParent, traceState, task.PrivateData.Attribution)
+	defer bgSpan.End()
+	ctx = spanCtx
+
 	key := ch.Key
 
 	privateData := task.PrivateData

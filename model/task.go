@@ -110,6 +110,21 @@ type TaskPrivateData struct {
 	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+
+	// Attribution 是任务提交时的可信归因深拷贝（§10.2/10.3）。用于异步阶段
+	// Refund/Recalculate/Token 重算/最终结算继续归原凭证主体或原业务应用，
+	// 以及单 NewAPI User 下的任务访问边界（§10.6）。不含签名秘密。
+	Attribution *constant.TrustedAttributionContext `json:"attribution,omitempty"`
+
+	// TraceContext 保存提交阶段的 W3C Trace Context，供后台 Span 用 Span Link
+	// 指向提交阶段（§10.2/10.5）。
+	TraceContext *TraceContextSnapshot `json:"trace_context,omitempty"`
+}
+
+// TraceContextSnapshot 保存提交阶段的 W3C Trace Context（§10.2）。
+type TraceContextSnapshot struct {
+	TraceParent string `json:"traceparent,omitempty"`
+	TraceState  string `json:"tracestate,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。

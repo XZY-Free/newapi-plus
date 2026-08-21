@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	taskdto "github.com/QuantumNous/new-api/dto"
@@ -611,6 +613,17 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
 		task.PrivateData.NodeName = common.NodeName
+		// 持久化可信归因与提交阶段 W3C Trace Context 快照（§10.2/10.3）。
+		// 后台 Refund/Recalculate/最终结算与访问边界据此继续归原主体。
+		task.PrivateData.Attribution = relayInfo.Attribution
+		if sc := trace.SpanContextFromContext(c.Request.Context()); sc.IsValid() {
+			hdr := http.Header{}
+			tracing.InjectTraceContext(c.Request.Context(), hdr)
+			task.PrivateData.TraceContext = &model.TraceContextSnapshot{
+				TraceParent: hdr.Get("traceparent"),
+				TraceState:  hdr.Get("tracestate"),
+			}
+		}
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			ModelPrice:      relayInfo.PriceData.ModelPrice,
 			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,

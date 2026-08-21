@@ -138,6 +138,13 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = props.UpstreamModelName
 	}
+	// 合并提交时持久化的可信归因（§10.4）：异步阶段继续归原凭证主体/业务应用，
+	// 后续轮询者不得覆盖。
+	if attr := task.PrivateData.Attribution; attr != nil {
+		if snap := model.BuildTrustedAttributionSnapshot(attr); snap != nil {
+			other["ai_attribution"] = snap
+		}
+	}
 	return other
 }
 

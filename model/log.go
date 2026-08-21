@@ -419,6 +419,12 @@ func buildTrustedAttributionSnapshot(t *constant.TrustedAttributionContext) map[
 	return a
 }
 
+// BuildTrustedAttributionSnapshot 导出可信归因快照构造（allowlist，§10.2/10.4），
+// 供 service 在异步任务日志中合并提交时的归因。
+func BuildTrustedAttributionSnapshot(t *constant.TrustedAttributionContext) map[string]interface{} {
+	return buildTrustedAttributionSnapshot(t)
+}
+
 // applyTrustedAttribution 将可信归因快照整块写入 other["ai_attribution"]，
 // 覆盖上游可能伪造的同名值。无 Trusted Context 时不生成该字段（legacy 语义）。
 // nil Other 会安全处理并返回可写 map。
