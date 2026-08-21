@@ -224,5 +224,7 @@ func AIGovernanceModels() []interface{} {
 		&AIIdentityAppBinding{},
 		&AIIdentitySigningKey{},
 		&AIIdentityAuditEvent{},
+		// 第六批：企业用量整点投影（§12）
+		&AIUsageHourly{},
 	}
 }

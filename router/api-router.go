@@ -424,6 +424,10 @@ func SetApiRouter(router *gin.Engine) {
 			aiGovernanceRoute.POST("/identity-profiles/:id/signing-keys/:key_id/revoke", controller.RevokeSigningKey)
 			// Identity Audit
 			aiGovernanceRoute.GET("/identity-audit-events", controller.GetIdentityAuditEvents)
+			// 第六批：企业用量统计投影与异常检测（§12）
+			aiGovernanceRoute.GET("/usage/stats", controller.GetEnterpriseUsageStats)
+			aiGovernanceRoute.GET("/usage/anomalies", controller.GetEnterpriseUsageAnomalies)
+			aiGovernanceRoute.POST("/usage/rebuild", controller.RebuildEnterpriseUsageProjection)
 		}
 	}
 }

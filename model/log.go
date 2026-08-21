@@ -729,6 +729,27 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	return logs, total, err
 }
 
+// GetLogsByTimeRange 按 created_at 范围分批读取日志（用于 §12.6 用量投影重建）。
+// 返回该页日志；offset 递增直到返回不足 pageSize 或为空。
+func GetLogsByTimeRange(startTimestamp, endTimestamp int64, pageSize, offset int) ([]*Log, error) {
+	if startTimestamp == 0 && endTimestamp == 0 {
+		return nil, nil
+	}
+	var logs []*Log
+	tx := LOG_DB.Model(&Log{})
+	if startTimestamp != 0 {
+		tx = tx.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("created_at <= ?", endTimestamp)
+	}
+	err := tx.Order("id asc").Limit(pageSize).Offset(offset).Find(&logs).Error
+	if err != nil {
+		return nil, err
+	}
+	return logs, nil
+}
+
 const logSearchCountLimit = 10000
 
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
