@@ -41,6 +41,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import * as React from 'react'
 
+import { ErrorState } from '@/components/error-state'
 import { PageFooterPortal } from '@/components/layout/components/page-footer'
 import { useMediaQuery } from '@/hooks'
 import { cn } from '@/lib/utils'
@@ -91,6 +92,28 @@ export type DataTablePageProps<TData> = {
    * Refetch / background loading — dims the table without removing rows.
    */
   isFetching?: boolean
+
+  /**
+   * Load error — renders {@link ErrorState} in place of the table/mobile list so a
+   * failed load is visibly distinct from an empty result. Optional: when unset (or
+   * falsy) the page behaves exactly as before.
+   */
+  isError?: boolean
+
+  /**
+   * Error-state title (used with {@link isError}).
+   */
+  errorTitle?: string
+
+  /**
+   * Error-state description (used with {@link isError}).
+   */
+  errorDescription?: string
+
+  /**
+   * Retry handler shown on the error state (used with {@link isError}).
+   */
+  onErrorRetry?: () => void
 
   /**
    * Empty-state title (used for both desktop {@link TableEmpty} and mobile fallback).
@@ -384,7 +407,7 @@ function renderToolbar<TData>(
 function renderPagination<TData>(
   props: DataTablePageProps<TData>
 ): React.ReactNode {
-  if (props.showPagination === false) {
+  if (props.showPagination === false || props.isError) {
     return null
   }
 
@@ -405,6 +428,16 @@ function renderMobile<TData>(
 ): React.ReactNode {
   if (!showMobile) {
     return null
+  }
+
+  if (props.isError) {
+    return (
+      <ErrorState
+        title={props.errorTitle}
+        description={props.errorDescription}
+        onRetry={props.onErrorRetry}
+      />
+    )
   }
 
   const isFetchingOnly = props.isFetching && !props.isLoading
@@ -485,6 +518,16 @@ function renderDesktop<TData>(
 ): React.ReactNode {
   if (showMobile) {
     return null
+  }
+
+  if (props.isError) {
+    return (
+      <ErrorState
+        title={props.errorTitle}
+        description={props.errorDescription}
+        onRetry={props.onErrorRetry}
+      />
+    )
   }
 
   const isFetchingOnly = props.isFetching && !props.isLoading

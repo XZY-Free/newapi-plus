@@ -35,7 +35,9 @@ import {
   listOwnerTeams,
   listPrincipals,
   listUsageTeams,
+  updateApplication,
   updateBusinessDomain,
+  updatePrincipal,
 } from '@/features/ai-governance/api'
 import type {
   GovernanceApplication,
@@ -476,5 +478,373 @@ describe('Applications page', () => {
     expect(
       screen.getByRole('combobox', { name: 'Select owner team' })
     ).toBeInTheDocument()
+  })
+})
+
+describe('Business Domains page — §11-B.1 边界（Error ≠ Empty + retry）', () => {
+  test('列表查询失败渲染错误态而非空态，并可点击重试恢复', async () => {
+    vi.mocked(listBusinessDomains)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({
+        items: [domain],
+        total: 1,
+        page: 1,
+        page_size: 20,
+      })
+    renderPage(<BusinessDomainsPage />)
+
+    // 错误态，绝不能被当成空列表
+    expect(
+      await screen.findByText('Oops! Something went wrong')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('No business domains found')
+    ).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Human Resources')).toBeInTheDocument()
+  })
+})
+
+describe('Principals page — §11-B.1 引用与关联边界', () => {
+  const enabledDomain: GovernanceBusinessDomain = {
+    id: 2,
+    domain_code: 'hr-portal',
+    domain_name: 'HR Portal',
+    enabled: true,
+    created_at: 1,
+    updated_at: 2,
+  }
+  const disabledDomain: GovernanceBusinessDomain = {
+    id: 1,
+    domain_code: 'legacy-hr',
+    domain_name: 'Legacy HR',
+    enabled: false,
+    created_at: 1,
+    updated_at: 2,
+  }
+  const principal201: GovernancePrincipal = {
+    ...principal,
+    business_domain_id: 201,
+  }
+
+  test('引用按 total 分页拉全量（201 条跨两页仍解析出名称）', async () => {
+    const domains = Array.from({ length: 201 }, (_, i) => ({
+      id: i + 1,
+      domain_code: `d${i + 1}`,
+      domain_name: `Domain ${i + 1}`,
+      enabled: true,
+      created_at: 1,
+      updated_at: 2,
+    }))
+    vi.mocked(listPrincipals).mockResolvedValue({
+      items: [principal201],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listBusinessDomains).mockImplementation((params) => {
+      const page = params?.page ?? 1
+      const start = (page - 1) * 200
+      return Promise.resolve({
+        items: domains.slice(start, start + 200),
+        total: 201,
+        page,
+        page_size: 200,
+      })
+    })
+    vi.mocked(listUsageTeams).mockResolvedValue({
+      items: [usageTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<PrincipalsPage />)
+
+    await waitFor(() =>
+      expect(screen.getByText('Alice Chen')).toBeInTheDocument()
+    )
+    // 第 2 页的 domain id=201 被解析为名称，而非裸数字
+    expect(screen.getByText('Domain 201')).toBeInTheDocument()
+    expect(screen.queryByText('201')).not.toBeInTheDocument()
+    // 证明确实翻到了第二页
+    expect(listBusinessDomains).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 2 })
+    )
+  })
+
+  test('引用查询失败时列展示占位符，而非把数字 ID 当名称', async () => {
+    vi.mocked(listPrincipals).mockResolvedValue({
+      items: [principal],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listBusinessDomains).mockRejectedValue(new Error('ref down'))
+    vi.mocked(listUsageTeams).mockResolvedValue({
+      items: [usageTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<PrincipalsPage />)
+
+    await waitFor(() =>
+      expect(screen.getByText('Alice Chen')).toBeInTheDocument()
+    )
+    // business_domain 列失败 → 占位符；usage_team 列仍正常解析出名称
+    expect(screen.getAllByText('—').length).toBe(1)
+    expect(screen.getByText('HR Engineering')).toBeInTheDocument()
+  })
+
+  test('已停用引用仍显示名称，但不进入新建候选列表', async () => {
+    vi.mocked(listPrincipals).mockResolvedValue({
+      items: [{ ...principal, business_domain_id: 1 }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    // 引用：不过滤 enabled → 停用的 Legacy HR 也能解析名称；
+    // 分配候选：仅 enabled=true → 只返回 HR Portal。
+    vi.mocked(listBusinessDomains).mockImplementation((params) =>
+      Promise.resolve(
+        params?.enabled
+          ? { items: [enabledDomain], total: 1, page: 1, page_size: 200 }
+          : {
+              items: [disabledDomain, enabledDomain],
+              total: 2,
+              page: 1,
+              page_size: 200,
+            }
+      )
+    )
+    vi.mocked(listUsageTeams).mockResolvedValue({
+      items: [usageTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<PrincipalsPage />)
+
+    // 已停用的历史引用（business_domain_id=1 → Legacy HR）在列中仍显示名称
+    await waitFor(() =>
+      expect(screen.getByText('Legacy HR')).toBeInTheDocument()
+    )
+
+    // 新建抽屉的分配候选只请求 enabled=true
+    await userEvent.click(screen.getByRole('button', { name: 'Add Principal' }))
+    await userEvent.click(
+      screen.getByRole('combobox', { name: 'Select business domain' })
+    )
+    await waitFor(() =>
+      expect(listBusinessDomains).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: true })
+      )
+    )
+    // 停用的 Legacy HR 不进入候选列表；启用的 HR Portal 出现
+    const listbox = await screen.findByRole('listbox')
+    expect(within(listbox).getByText('HR Portal')).toBeInTheDocument()
+    expect(
+      within(listbox).queryByText('Legacy HR')
+    ).not.toBeInTheDocument()
+  })
+
+  test('编辑抽屉用引用名称预填选择器，而非数字 ID', async () => {
+    vi.mocked(listPrincipals).mockResolvedValue({
+      items: [principal],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listBusinessDomains).mockResolvedValue({
+      items: [domain],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listUsageTeams).mockResolvedValue({
+      items: [usageTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<PrincipalsPage />)
+
+    // 先等引用在列中渲染（同时稳定行，避免点击命中被重绘摘除的节点）
+    await screen.findByText('Alice Chen')
+    await screen.findByText('Human Resources')
+    await screen.findByText('HR Engineering')
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    // business_domain_id=1 → Human Resources；usage_team_id=2 → HR Engineering
+    expect(
+      await screen.findByRole('combobox', { name: 'Human Resources' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('combobox', { name: 'HR Engineering' })
+    ).toBeInTheDocument()
+  })
+
+  test('启用/停用仅发送 { enabled }，不夹带其它字段', async () => {
+    vi.mocked(listPrincipals).mockResolvedValue({
+      items: [principal],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listBusinessDomains).mockResolvedValue({
+      items: [domain],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listUsageTeams).mockResolvedValue({
+      items: [usageTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(updatePrincipal).mockResolvedValue({
+      ...principal,
+      enabled: false,
+    })
+    renderPage(<PrincipalsPage />)
+
+    await screen.findByText('Alice Chen')
+    await screen.findByText('Human Resources')
+    await screen.findByText('HR Engineering')
+    await userEvent.click(screen.getByRole('button', { name: 'Disable' }))
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Disable this item?',
+    })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Disable' }))
+
+    await waitFor(() =>
+      expect(updatePrincipal).toHaveBeenCalledWith(5, { enabled: false })
+    )
+  })
+
+  test('仅改名称时重传关联 ID，避免触发 requireEnabled 校验', async () => {
+    vi.mocked(listPrincipals).mockResolvedValue({
+      items: [principal],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    // 父引用已停用：若重传 business_domain_id 会误触发后端 requireEnabled 拒绝
+    vi.mocked(listBusinessDomains).mockResolvedValue({
+      items: [{ ...domain, enabled: false }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listUsageTeams).mockResolvedValue({
+      items: [usageTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(updatePrincipal).mockResolvedValue({
+      ...principal,
+      principal_name: 'New Name',
+    })
+    renderPage(<PrincipalsPage />)
+
+    await screen.findByText('Alice Chen')
+    await screen.findByText('Human Resources')
+    await screen.findByText('HR Engineering')
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    const nameInput = await screen.findByPlaceholderText(
+      'Enter a principal name'
+    )
+    await userEvent.clear(nameInput)
+    await userEvent.type(nameInput, 'New Name')
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() =>
+      expect(updatePrincipal).toHaveBeenCalledWith(5, {
+        principal_name: 'New Name',
+      })
+    )
+    // 绝不重发未变的关联 ID
+    expect(updatePrincipal).not.toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ business_domain_id: 1 })
+    )
+    expect(updatePrincipal).not.toHaveBeenCalledWith(
+      5,
+      expect.objectContaining({ usage_team_id: 2 })
+    )
+  })
+})
+
+describe('Applications page — §11-B.1 引用与启用边界', () => {
+  test('编辑抽屉用 owner team 引用名称预填选择器', async () => {
+    vi.mocked(listApplications).mockResolvedValue({
+      items: [app],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listBusinessDomains).mockResolvedValue({
+      items: [domain],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listOwnerTeams).mockResolvedValue({
+      items: [ownerTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<ApplicationsPage />)
+
+    await screen.findByText('HR Chatbot')
+    await screen.findByText('AI Platform')
+    await screen.findByText('Human Resources')
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    // owner_team_id=3 → AI Platform；business_domain_id=1 → Human Resources
+    expect(
+      await screen.findByRole('combobox', { name: 'AI Platform' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('combobox', { name: 'Human Resources' })
+    ).toBeInTheDocument()
+  })
+
+  test('启用/停用仅发送 { enabled }，不夹带其它字段', async () => {
+    vi.mocked(listApplications).mockResolvedValue({
+      items: [app],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listBusinessDomains).mockResolvedValue({
+      items: [domain],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listOwnerTeams).mockResolvedValue({
+      items: [ownerTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(updateApplication).mockResolvedValue({ ...app, enabled: false })
+    renderPage(<ApplicationsPage />)
+
+    await screen.findByText('HR Chatbot')
+    await screen.findByText('AI Platform')
+    await screen.findByText('Human Resources')
+    await userEvent.click(screen.getByRole('button', { name: 'Disable' }))
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Disable this item?',
+    })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Disable' }))
+
+    await waitFor(() =>
+      expect(updateApplication).toHaveBeenCalledWith(6, { enabled: false })
+    )
   })
 })

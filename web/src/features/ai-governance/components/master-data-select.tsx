@@ -83,9 +83,16 @@ export function MasterDataSelect<T>({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  // 服务端搜索加 400ms debounce：输入不每次按键都打后端，queryKey 仅在防抖后变化。
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [selectedLabel, setSelectedLabel] = useState<string | null>(
     defaultLabel ?? null
   )
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(query), 400)
+    return () => clearTimeout(id)
+  }, [query])
 
   const {
     data: items,
@@ -96,7 +103,7 @@ export function MasterDataSelect<T>({
   } = useMasterDataOptions<T>({
     queryKey,
     fetchPage,
-    keyword: query,
+    keyword: debouncedQuery,
   })
 
   useEffect(() => {
@@ -116,6 +123,7 @@ export function MasterDataSelect<T>({
     onChange(itemToValue(item))
     setOpen(false)
     setQuery('')
+    setDebouncedQuery('')
   }
 
   const display =

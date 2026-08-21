@@ -50,7 +50,7 @@ export function BusinessDomainSelect(props: TeamSelectProps) {
       className={props.className}
       queryKey={['ai-governance', 'business-domain-options']}
       fetchPage={({ page, page_size, keyword }) =>
-        listBusinessDomains({ page, page_size, keyword })
+        listBusinessDomains({ page, page_size, keyword, enabled: true })
       }
       itemToValue={(item) => item.id}
       itemToLabel={(item) => item.domain_name}
@@ -76,7 +76,7 @@ export function UsageTeamSelect(props: TeamSelectProps) {
       className={props.className}
       queryKey={['ai-governance', 'usage-team-options']}
       fetchPage={({ page, page_size, keyword }) =>
-        listUsageTeams({ page, page_size, keyword })
+        listUsageTeams({ page, page_size, keyword, enabled: true })
       }
       itemToValue={(item) => item.id}
       itemToLabel={(item) => item.team_name}
@@ -102,7 +102,7 @@ export function OwnerTeamSelect(props: TeamSelectProps) {
       className={props.className}
       queryKey={['ai-governance', 'owner-team-options']}
       fetchPage={({ page, page_size, keyword }) =>
-        listOwnerTeams({ page, page_size, keyword })
+        listOwnerTeams({ page, page_size, keyword, enabled: true })
       }
       itemToValue={(item) => item.id}
       itemToLabel={(item) => item.team_name}

@@ -70,11 +70,15 @@ import {
   listUsageTeams,
   updatePrincipal,
 } from '../../api'
-import { getGovernanceCodeSchema } from '../../lib/code-schema'
+import {
+  getNameSchema,
+  getSimpleCodeSchema,
+  PRINCIPAL_CODE_MAX_LENGTH,
+} from '../../lib/code-schema'
 import { parseEnabledFilter } from '../../lib/enabled-filter'
 import { useGovernanceTableState } from '../../lib/governance-table-state'
 import { useMasterDataReference } from '../../lib/master-data-reference'
-import type { GovernancePrincipal } from '../../types'
+import type { GovernancePrincipal, UpdatePrincipalPayload } from '../../types'
 import { EnabledBadge } from '../enabled-badge'
 import {
   BusinessDomainSelect,
@@ -83,7 +87,7 @@ import {
 import { MasterDataRowActions } from '../master-data-row-actions'
 
 const PRINCIPAL_CODE_HELP =
-  'Starts with a lowercase letter; lowercase letters, numbers, dots, underscores or hyphens; 2-64 characters. Cannot be changed after creation.'
+  'Required, no whitespace, up to 128 characters. Cannot be changed after creation.'
 
 type FormValues = {
   principal_code: string
@@ -160,8 +164,12 @@ export function PrincipalsPage() {
       header: t('Business Domain'),
       cell: ({ row }) => (
         <span className='text-sm'>
-          {domainRef.data?.byId.get(row.original.business_domain_id) ??
-            String(row.original.business_domain_id)}
+          {domainRef.isError ? (
+            '—'
+          ) : (
+            (domainRef.data?.byId.get(row.original.business_domain_id) ??
+              String(row.original.business_domain_id))
+          )}
         </span>
       ),
       filterFn: (row, _id, value: unknown) =>
@@ -173,8 +181,12 @@ export function PrincipalsPage() {
       header: t('Usage Team'),
       cell: ({ row }) => (
         <span className='text-sm'>
-          {teamRef.data?.byId.get(row.original.usage_team_id) ??
-            String(row.original.usage_team_id)}
+          {teamRef.isError ? (
+            '—'
+          ) : (
+            (teamRef.data?.byId.get(row.original.usage_team_id) ??
+              String(row.original.usage_team_id))
+          )}
         </span>
       ),
       filterFn: (row, _id, value: unknown) =>
@@ -220,12 +232,7 @@ export function PrincipalsPage() {
             onEdit={() => openUpdate(entity)}
             onToggle={async (enabled) => {
               try {
-                await updatePrincipal(entity.id, {
-                  principal_name: entity.principal_name,
-                  business_domain_id: entity.business_domain_id,
-                  usage_team_id: entity.usage_team_id,
-                  enabled,
-                })
+                await updatePrincipal(entity.id, { enabled })
                 toast.success(
                   t(enabled ? 'Principal enabled' : 'Principal disabled')
                 )
@@ -256,7 +263,7 @@ export function PrincipalsPage() {
   )?.value as string | undefined
   const enabledValue = parseEnabledFilter(enabledFilter)
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: [
       'ai-governance',
       'principals',
@@ -296,11 +303,8 @@ export function PrincipalsPage() {
   })
 
   const schema = z.object({
-    principal_code: getGovernanceCodeSchema(t),
-    principal_name: z
-      .string()
-      .min(1, t('Name is required'))
-      .max(200, t('Name must be at most 200 characters')),
+    principal_code: getSimpleCodeSchema(t, PRINCIPAL_CODE_MAX_LENGTH),
+    principal_name: getNameSchema(t),
     business_domain_id: requiredId(t, 'Please select a business domain'),
     usage_team_id: requiredId(t, 'Please select a usage team'),
   })
@@ -345,11 +349,20 @@ export function PrincipalsPage() {
     setIsSubmitting(true)
     try {
       if (isUpdate && currentRow) {
-        await updatePrincipal(currentRow.id, {
-          principal_name: data.principal_name,
-          business_domain_id: data.business_domain_id,
-          usage_team_id: data.usage_team_id,
-        })
+        // 只发送实际修改的字段，绝不重传未变的关联 ID：
+        // 后端对 business_domain_id / usage_team_id > 0 会执行 requireEnabled* 校验，
+        // 若旧关联已被停用，重传会误触发拒绝。
+        const payload: UpdatePrincipalPayload = {}
+        if (data.principal_name !== currentRow.principal_name) {
+          payload.principal_name = data.principal_name
+        }
+        if (data.business_domain_id !== currentRow.business_domain_id) {
+          payload.business_domain_id = data.business_domain_id
+        }
+        if (data.usage_team_id !== currentRow.usage_team_id) {
+          payload.usage_team_id = data.usage_team_id
+        }
+        await updatePrincipal(currentRow.id, payload)
         toast.success(t('Principal updated'))
       } else {
         await createPrincipal({
@@ -386,6 +399,10 @@ export function PrincipalsPage() {
         columns={columns}
         isLoading={isLoading}
         isFetching={isFetching}
+        isError={error != null && data == null}
+        errorTitle={t('Oops! Something went wrong')}
+        errorDescription={t('Failed to load')}
+        onErrorRetry={() => void refetch()}
         emptyTitle={t('No principals found')}
         emptyDescription={t('No principals match the current search and filters.')}
         skeletonKeyPrefix='principals-skeleton'
@@ -498,6 +515,13 @@ export function PrincipalsPage() {
                           <BusinessDomainSelect
                             value={field.value}
                             onChange={field.onChange}
+                            defaultLabel={
+                              isUpdate && currentRow
+                                ? domainRef.data?.byId.get(
+                                    currentRow.business_domain_id
+                                  )
+                                : undefined
+                            }
                           />
                         </FormControl>
                         <FormMessage />
@@ -514,6 +538,13 @@ export function PrincipalsPage() {
                           <UsageTeamSelect
                             value={field.value}
                             onChange={field.onChange}
+                            defaultLabel={
+                              isUpdate && currentRow
+                                ? teamRef.data?.byId.get(
+                                    currentRow.usage_team_id
+                                  )
+                                : undefined
+                            }
                           />
                         </FormControl>
                         <FormDescription>

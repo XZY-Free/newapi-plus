@@ -70,11 +70,17 @@ import {
   listOwnerTeams,
   updateApplication,
 } from '../../api'
-import { getGovernanceCodeSchema } from '../../lib/code-schema'
+import {
+  getDomainCodeSchema,
+  getNameSchema,
+} from '../../lib/code-schema'
 import { parseEnabledFilter } from '../../lib/enabled-filter'
 import { useGovernanceTableState } from '../../lib/governance-table-state'
 import { useMasterDataReference } from '../../lib/master-data-reference'
-import type { GovernanceApplication } from '../../types'
+import type {
+  GovernanceApplication,
+  UpdateApplicationPayload,
+} from '../../types'
 import { EnabledBadge } from '../enabled-badge'
 import {
   BusinessDomainSelect,
@@ -163,8 +169,12 @@ export function ApplicationsPage() {
       header: t('Business Domain'),
       cell: ({ row }) => (
         <span className='text-sm'>
-          {domainRef.data?.byId.get(row.original.business_domain_id) ??
-            String(row.original.business_domain_id)}
+          {domainRef.isError ? (
+            '—'
+          ) : (
+            (domainRef.data?.byId.get(row.original.business_domain_id) ??
+              String(row.original.business_domain_id))
+          )}
         </span>
       ),
       filterFn: (row, _id, value: unknown) =>
@@ -176,8 +186,12 @@ export function ApplicationsPage() {
       header: t('Owner Team'),
       cell: ({ row }) => (
         <span className='text-sm'>
-          {ownerTeamRef.data?.byId.get(row.original.owner_team_id) ??
-            String(row.original.owner_team_id)}
+          {ownerTeamRef.isError ? (
+            '—'
+          ) : (
+            (ownerTeamRef.data?.byId.get(row.original.owner_team_id) ??
+              String(row.original.owner_team_id))
+          )}
         </span>
       ),
       filterFn: (row, _id, value: unknown) =>
@@ -217,12 +231,7 @@ export function ApplicationsPage() {
             onEdit={() => openUpdate(entity)}
             onToggle={async (enabled) => {
               try {
-                await updateApplication(entity.id, {
-                  app_name: entity.app_name,
-                  business_domain_id: entity.business_domain_id,
-                  owner_team_id: entity.owner_team_id,
-                  enabled,
-                })
+                await updateApplication(entity.id, { enabled })
                 toast.success(
                   t(enabled ? 'Application enabled' : 'Application disabled')
                 )
@@ -253,7 +262,7 @@ export function ApplicationsPage() {
   )?.value as string | undefined
   const enabledValue = parseEnabledFilter(enabledFilter)
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: [
       'ai-governance',
       'applications',
@@ -293,11 +302,8 @@ export function ApplicationsPage() {
   })
 
   const schema = z.object({
-    app_code: getGovernanceCodeSchema(t),
-    app_name: z
-      .string()
-      .min(1, t('Name is required'))
-      .max(200, t('Name must be at most 200 characters')),
+    app_code: getDomainCodeSchema(t),
+    app_name: getNameSchema(t),
     business_domain_id: requiredId(t, 'Please select a business domain'),
     owner_team_id: requiredId(t, 'Please select an owner team'),
   })
@@ -342,11 +348,18 @@ export function ApplicationsPage() {
     setIsSubmitting(true)
     try {
       if (isUpdate && currentRow) {
-        await updateApplication(currentRow.id, {
-          app_name: data.app_name,
-          business_domain_id: data.business_domain_id,
-          owner_team_id: data.owner_team_id,
-        })
+        // 只发送实际修改的字段，绝不重传未变的关联 ID（见 principals 页同款说明）。
+        const payload: UpdateApplicationPayload = {}
+        if (data.app_name !== currentRow.app_name) {
+          payload.app_name = data.app_name
+        }
+        if (data.business_domain_id !== currentRow.business_domain_id) {
+          payload.business_domain_id = data.business_domain_id
+        }
+        if (data.owner_team_id !== currentRow.owner_team_id) {
+          payload.owner_team_id = data.owner_team_id
+        }
+        await updateApplication(currentRow.id, payload)
         toast.success(t('Application updated'))
       } else {
         await createApplication({
@@ -383,6 +396,10 @@ export function ApplicationsPage() {
         columns={columns}
         isLoading={isLoading}
         isFetching={isFetching}
+        isError={error != null && data == null}
+        errorTitle={t('Oops! Something went wrong')}
+        errorDescription={t('Failed to load')}
+        onErrorRetry={() => void refetch()}
         emptyTitle={t('No AI applications found')}
         emptyDescription={t('No AI applications match the current search and filters.')}
         skeletonKeyPrefix='applications-skeleton'
@@ -486,6 +503,13 @@ export function ApplicationsPage() {
                           <BusinessDomainSelect
                             value={field.value}
                             onChange={field.onChange}
+                            defaultLabel={
+                              isUpdate && currentRow
+                                ? domainRef.data?.byId.get(
+                                    currentRow.business_domain_id
+                                  )
+                                : undefined
+                            }
                           />
                         </FormControl>
                         <FormMessage />
@@ -502,6 +526,13 @@ export function ApplicationsPage() {
                           <OwnerTeamSelect
                             value={field.value}
                             onChange={field.onChange}
+                            defaultLabel={
+                              isUpdate && currentRow
+                                ? ownerTeamRef.data?.byId.get(
+                                    currentRow.owner_team_id
+                                  )
+                                : undefined
+                            }
                           />
                         </FormControl>
                         <FormDescription>

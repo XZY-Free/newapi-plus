@@ -16,11 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useTranslation } from 'react-i18next'
+
 import {
   createBusinessDomain,
   listBusinessDomains,
   updateBusinessDomain,
 } from '../../api'
+import { getDomainCodeSchema } from '../../lib/code-schema'
 import type {
   CreateBusinessDomainPayload,
   GovernanceBusinessDomain,
@@ -34,6 +37,7 @@ import { MasterDataCodeCrudPage } from '../master-data-code-crud-page'
  * domain_code 创建后只读；无删除；前端预校验编号规则；停用需确认。
  */
 export function BusinessDomainsPage() {
+  const { t } = useTranslation()
   return (
     <MasterDataCodeCrudPage<
       GovernanceBusinessDomain,
@@ -41,6 +45,7 @@ export function BusinessDomainsPage() {
       UpdateBusinessDomainPayload
     >
       queryKey={['ai-governance', 'business-domains']}
+      codeSchema={getDomainCodeSchema(t)}
       list={listBusinessDomains}
       create={createBusinessDomain}
       update={updateBusinessDomain}
@@ -52,10 +57,7 @@ export function BusinessDomainsPage() {
         domain_name: form.name,
       })}
       toUpdate={(form) => ({ domain_name: form.name })}
-      toToggle={(row, enabled) => ({
-        domain_name: row.domain_name,
-        enabled,
-      })}
+      toToggle={(_row, enabled) => ({ enabled })}
       toDefaults={(row) => ({
         code: row.domain_code,
         name: row.domain_name,

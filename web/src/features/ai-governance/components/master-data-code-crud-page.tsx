@@ -63,7 +63,7 @@ import useDialogState from '@/hooks/use-dialog'
 import { formatTimestamp } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { getGovernanceCodeSchema } from '../lib/code-schema'
+import { getNameSchema } from '../lib/code-schema'
 import { parseEnabledFilter } from '../lib/enabled-filter'
 import { useGovernanceTableState } from '../lib/governance-table-state'
 import { EnabledBadge } from './enabled-badge'
@@ -108,6 +108,8 @@ export function MasterDataCodeCrudPage<
   toUpdate,
   toToggle,
   toDefaults,
+  /** 前端预校验 code 用的 zod schema（domain/app 用严格、team/principal 用简单）。 */
+  codeSchema,
   // i18n（入参为英文源串，组件内 t() 取 7 语言翻译）
   codeLabel,
   nameLabel,
@@ -146,6 +148,8 @@ export function MasterDataCodeCrudPage<
   toUpdate: (form: FormValues) => TUpdate
   toToggle: (row: T, enabled: boolean) => TUpdate
   toDefaults: (row: T) => FormValues
+  /** 前端预校验 code 用的 zod schema（domain/app 用严格、team/principal 用简单）。 */
+  codeSchema: z.ZodString
   codeLabel: string
   nameLabel: string
   codePlaceholder: string
@@ -263,7 +267,7 @@ export function MasterDataCodeCrudPage<
   const enabledValue = parseEnabledFilter(enabledFilter)
 
   // 列表加载
-  const { data, isLoading, isFetching } = useQueryData<T>({
+  const { data, isLoading, isFetching, error, refetch } = useQueryData<T>({
     queryKey,
     page: tableState.pagination.pageIndex + 1,
     pageSize: tableState.pagination.pageSize,
@@ -289,11 +293,8 @@ export function MasterDataCodeCrudPage<
   })
 
   const formSchema = z.object({
-    code: getGovernanceCodeSchema(t),
-    name: z
-      .string()
-      .min(1, t('Name is required'))
-      .max(200, t('Name must be at most 200 characters')),
+    code: codeSchema,
+    name: getNameSchema(t),
   })
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -352,6 +353,10 @@ export function MasterDataCodeCrudPage<
         columns={columns}
         isLoading={isLoading}
         isFetching={isFetching}
+        isError={error != null && data == null}
+        errorTitle={t('Oops! Something went wrong')}
+        errorDescription={t('Failed to load')}
+        onErrorRetry={() => void refetch()}
         emptyTitle={t(emptyTitle)}
         emptyDescription={t(emptyDescription)}
         skeletonKeyPrefix={`${queryKey.at(-1)}-skeleton`}

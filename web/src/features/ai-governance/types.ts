@@ -353,7 +353,7 @@ export interface CreateBusinessDomainPayload {
   domain_name: string
 }
 export interface UpdateBusinessDomainPayload {
-  domain_name: string
+  domain_name?: string
   enabled?: boolean
 }
 
@@ -363,7 +363,7 @@ export interface CreateOwnerTeamPayload {
   team_name: string
 }
 export interface UpdateOwnerTeamPayload {
-  team_name: string
+  team_name?: string
   enabled?: boolean
 }
 
@@ -373,7 +373,7 @@ export interface CreateUsageTeamPayload {
   team_name: string
 }
 export interface UpdateUsageTeamPayload {
-  team_name: string
+  team_name?: string
   enabled?: boolean
 }
 
@@ -385,9 +385,9 @@ export interface CreatePrincipalPayload {
   usage_team_id: number
 }
 export interface UpdatePrincipalPayload {
-  principal_name: string
-  business_domain_id: number
-  usage_team_id: number
+  principal_name?: string
+  business_domain_id?: number
+  usage_team_id?: number
   enabled?: boolean
 }
 
@@ -398,8 +398,8 @@ export interface CreateCredentialPurposePayload {
   purpose_type: CredentialPurposeType
 }
 export interface UpdateCredentialPurposePayload {
-  purpose_name: string
-  purpose_type: CredentialPurposeType
+  purpose_name?: string
+  purpose_type?: CredentialPurposeType
   enabled?: boolean
 }
 
@@ -411,9 +411,9 @@ export interface CreateApplicationPayload {
   owner_team_id: number
 }
 export interface UpdateApplicationPayload {
-  app_name: string
-  business_domain_id: number
-  owner_team_id: number
+  app_name?: string
+  business_domain_id?: number
+  owner_team_id?: number
   enabled?: boolean
 }
 

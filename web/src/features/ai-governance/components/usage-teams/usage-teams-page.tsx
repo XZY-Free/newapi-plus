@@ -16,11 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useTranslation } from 'react-i18next'
+
 import {
   createUsageTeam,
   listUsageTeams,
   updateUsageTeam,
 } from '../../api'
+import {
+  getSimpleCodeSchema,
+  SIMPLE_CODE_MAX_LENGTH,
+} from '../../lib/code-schema'
 import type {
   CreateUsageTeamPayload,
   GovernanceUsageTeam,
@@ -35,6 +41,7 @@ import { MasterDataCodeCrudPage } from '../master-data-code-crud-page'
  * 与 Application Owner Team 不是一回事。
  */
 export function UsageTeamsPage() {
+  const { t } = useTranslation()
   return (
     <MasterDataCodeCrudPage<
       GovernanceUsageTeam,
@@ -42,6 +49,7 @@ export function UsageTeamsPage() {
       UpdateUsageTeamPayload
     >
       queryKey={['ai-governance', 'usage-teams']}
+      codeSchema={getSimpleCodeSchema(t, SIMPLE_CODE_MAX_LENGTH)}
       list={listUsageTeams}
       create={createUsageTeam}
       update={updateUsageTeam}
@@ -50,13 +58,13 @@ export function UsageTeamsPage() {
       getUpdatedAt={(row) => row.updated_at}
       toCreate={(form) => ({ team_code: form.code, team_name: form.name })}
       toUpdate={(form) => ({ team_name: form.name })}
-      toToggle={(row, enabled) => ({ team_name: row.team_name, enabled })}
+      toToggle={(_row, enabled) => ({ enabled })}
       toDefaults={(row) => ({ code: row.team_code, name: row.team_name })}
       codeLabel='Team Code'
       nameLabel='Usage Team Name'
       codePlaceholder='e.g. hr-eng, finance-ops'
       namePlaceholder='Enter a usage team name'
-      codeHelp='Starts with a lowercase letter; lowercase letters, numbers, dots, underscores or hyphens; 2-64 characters. Cannot be changed after creation.'
+      codeHelp='Required, no whitespace, up to 64 characters. Cannot be changed after creation.'
       pageDescription='Usage teams are the organization groups a key owner belongs to. A Usage Team identifies the team a credential user is part of; it is not an Application Owner Team.'
       emptyTitle='No usage teams found'
       emptyDescription='No usage teams match the current search and filters.'

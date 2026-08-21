@@ -16,11 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useTranslation } from 'react-i18next'
+
 import {
   createOwnerTeam,
   listOwnerTeams,
   updateOwnerTeam,
 } from '../../api'
+import {
+  getSimpleCodeSchema,
+  SIMPLE_CODE_MAX_LENGTH,
+} from '../../lib/code-schema'
 import type {
   CreateOwnerTeamPayload,
   GovernanceOwnerTeam,
@@ -35,6 +41,7 @@ import { MasterDataCodeCrudPage } from '../master-data-code-crud-page'
  * team_code 创建后只读；无删除。
  */
 export function OwnerTeamsPage() {
+  const { t } = useTranslation()
   return (
     <MasterDataCodeCrudPage<
       GovernanceOwnerTeam,
@@ -42,6 +49,7 @@ export function OwnerTeamsPage() {
       UpdateOwnerTeamPayload
     >
       queryKey={['ai-governance', 'owner-teams']}
+      codeSchema={getSimpleCodeSchema(t, SIMPLE_CODE_MAX_LENGTH)}
       list={listOwnerTeams}
       create={createOwnerTeam}
       update={updateOwnerTeam}
@@ -50,13 +58,13 @@ export function OwnerTeamsPage() {
       getUpdatedAt={(row) => row.updated_at}
       toCreate={(form) => ({ team_code: form.code, team_name: form.name })}
       toUpdate={(form) => ({ team_name: form.name })}
-      toToggle={(row, enabled) => ({ team_name: row.team_name, enabled })}
+      toToggle={(_row, enabled) => ({ enabled })}
       toDefaults={(row) => ({ code: row.team_code, name: row.team_name })}
       codeLabel='Owner Team Code'
       nameLabel='Owner Team Name'
       codePlaceholder='e.g. ai-platform, ml-infra'
       namePlaceholder='Enter an owner team name'
-      codeHelp='Starts with a lowercase letter; lowercase letters, numbers, dots, underscores or hyphens; 2-64 characters. Cannot be changed after creation.'
+      codeHelp='Required, no whitespace, up to 64 characters. Cannot be changed after creation.'
       pageDescription='Application owner teams are the teams responsible for building, maintaining and operating AI applications. They are not Usage Teams.'
       emptyTitle='No owner teams found'
       emptyDescription='No owner teams match the current search and filters.'

@@ -76,10 +76,15 @@ import {
   listCredentialPurposes,
   updateCredentialPurpose,
 } from '../../api'
-import { getGovernanceCodeSchema } from '../../lib/code-schema'
+import {
+  getNameSchema,
+  getSimpleCodeSchema,
+  SIMPLE_CODE_MAX_LENGTH,
+} from '../../lib/code-schema'
 import {
   getPurposeTypeLabel,
   purposeTypeOptions,
+  purposeTypeSchema,
 } from '../../lib/credential-purpose-types'
 import { parseEnabledFilter } from '../../lib/enabled-filter'
 import { useGovernanceTableState } from '../../lib/governance-table-state'
@@ -91,14 +96,14 @@ import { EnabledBadge } from '../enabled-badge'
 import { MasterDataRowActions } from '../master-data-row-actions'
 
 const PURPOSE_CODE_HELP =
-  'Starts with a lowercase letter; lowercase letters, numbers, dots, underscores or hyphens; 2-64 characters. Cannot be changed after creation.'
+  'Required, no whitespace, up to 64 characters. Cannot be changed after creation.'
 const PURPOSE_DESC =
   'A credential purpose declares what a key is approved for (Desktop Client, IDE, Script, Service, Other). This is an approved use, not a verified client.'
 
 type FormValues = {
   purpose_code: string
   purpose_name: string
-  purpose_type: string
+  purpose_type: CredentialPurposeType | ''
 }
 
 /**
@@ -193,11 +198,7 @@ export function CredentialPurposesPage() {
             onEdit={() => openUpdate(entity)}
             onToggle={async (enabled) => {
               try {
-                await updateCredentialPurpose(entity.id, {
-                  purpose_name: entity.purpose_name,
-                  purpose_type: entity.purpose_type,
-                  enabled,
-                })
+                await updateCredentialPurpose(entity.id, { enabled })
                 toast.success(
                   t(enabled ? 'Credential purpose enabled' : 'Credential purpose disabled')
                 )
@@ -225,7 +226,7 @@ export function CredentialPurposesPage() {
   )?.value as string | undefined
   const enabledValue = parseEnabledFilter(enabledFilter)
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: [
       'ai-governance',
       'credential-purposes',
@@ -263,12 +264,11 @@ export function CredentialPurposesPage() {
   })
 
   const schema = z.object({
-    purpose_code: getGovernanceCodeSchema(t),
-    purpose_name: z
-      .string()
-      .min(1, t('Name is required'))
-      .max(200, t('Name must be at most 200 characters')),
-    purpose_type: z.string().min(1, t('Please select a purpose type')),
+    purpose_code: getSimpleCodeSchema(t, SIMPLE_CODE_MAX_LENGTH),
+    purpose_name: getNameSchema(t),
+    purpose_type: purposeTypeSchema
+      .or(z.literal(''))
+      .refine((v) => v !== '', t('Please select a purpose type')),
   })
 
   const form = useForm<FormValues>({
@@ -302,14 +302,14 @@ export function CredentialPurposesPage() {
       if (isUpdate && currentRow) {
         await updateCredentialPurpose(currentRow.id, {
           purpose_name: data.purpose_name,
-          purpose_type: data.purpose_type as CredentialPurposeType,
+          purpose_type: data.purpose_type,
         })
         toast.success(t('Credential purpose updated'))
       } else {
         await createCredentialPurpose({
           purpose_code: data.purpose_code,
           purpose_name: data.purpose_name,
-          purpose_type: data.purpose_type as CredentialPurposeType,
+          purpose_type: data.purpose_type,
         })
         toast.success(t('Credential purpose created'))
       }
@@ -337,6 +337,10 @@ export function CredentialPurposesPage() {
         columns={columns}
         isLoading={isLoading}
         isFetching={isFetching}
+        isError={error != null && data == null}
+        errorTitle={t('Oops! Something went wrong')}
+        errorDescription={t('Failed to load')}
+        onErrorRetry={() => void refetch()}
         emptyTitle={t('No credential purposes found')}
         emptyDescription={t(
           'No credential purposes match the current search and filters.'
