@@ -89,7 +89,8 @@ export const AI_GOVERNANCE_SECTION_META: Record<
 > = {
   'business-domains': {
     icon: Building2,
-    descriptionKey: 'Business domains group people and applications by organization',
+    descriptionKey:
+      'Business domains group keys, principals and applications by line of business (HR, Finance, Production, Marketing)',
   },
   'usage-teams': { icon: Users, descriptionKey: 'Usage teams are the organization groups a key owner belongs to' },
   'principals': { icon: Fingerprint, descriptionKey: 'Principals identify the person accountable for weak-identity keys' },

@@ -153,7 +153,7 @@ export function useSidebarData(): SidebarData {
           },
           {
             title: t('Enterprise AI Governance'),
-            url: '/ai-governance/business-domains',
+            url: '/ai-governance',
             activeUrls: ['/ai-governance'],
             icon: ShieldCheck,
             requiredRole: ROLE.SUPER_ADMIN,

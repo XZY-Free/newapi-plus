@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
 
-import { AI_GOVERNANCE_DEFAULT_SECTION } from '@/features/ai-governance/section-registry'
+import { GovernancePageLayout } from '@/features/ai-governance/components/governance-page-layout'
+import { GovernanceOverview } from '@/features/ai-governance/components/governance-overview'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -29,10 +31,16 @@ export const Route = createFileRoute('/_authenticated/ai-governance/')({
     if (auth.user?.role !== ROLE.SUPER_ADMIN) {
       throw redirect({ to: '/403' })
     }
-
-    throw redirect({
-      to: '/ai-governance/$section',
-      params: { section: AI_GOVERNANCE_DEFAULT_SECTION },
-    })
   },
+  component: AIGovernanceOverviewPage,
 })
+
+function AIGovernanceOverviewPage() {
+  const { t } = useTranslation()
+
+  return (
+    <GovernancePageLayout title={t('Enterprise AI Governance')}>
+      <GovernanceOverview />
+    </GovernancePageLayout>
+  )
+}

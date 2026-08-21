@@ -5330,7 +5330,7 @@
     "Governance Master Data": "Governance Master Data",
     "Identity & Audit": "Identity & Audit",
     "Usage & Observability": "Usage & Observability",
-    "Business domains group people and applications by organization": "Business domains group people and applications by organization",
+    "Business domains group keys, principals and applications by line of business (HR, Finance, Production, Marketing)": "Business domains group keys, principals and applications by line of business (HR, Finance, Production, Marketing)",
     "Usage teams are the organization groups a key owner belongs to": "Usage teams are the organization groups a key owner belongs to",
     "Principals identify the person accountable for weak-identity keys": "Principals identify the person accountable for weak-identity keys",
     "Credential purposes declare what a key is approved for (WorkBuddy, IDE, script)": "Credential purposes declare what a key is approved for (WorkBuddy, IDE, script)",
