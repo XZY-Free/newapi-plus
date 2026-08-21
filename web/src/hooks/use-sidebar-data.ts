@@ -29,6 +29,7 @@ import {
   Radio,
   ServerCog,
   Settings,
+  ShieldCheck,
   Ticket,
   User,
   Users,
@@ -148,6 +149,13 @@ export function useSidebarData(): SidebarData {
             title: t('System Info'),
             url: '/system-info',
             icon: ServerCog,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Enterprise AI Governance'),
+            url: '/ai-governance/business-domains',
+            activeUrls: ['/ai-governance'],
+            icon: ShieldCheck,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
