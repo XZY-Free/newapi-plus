@@ -50,6 +50,7 @@ import type {
 import { ApplicationsPage } from '../applications/applications-page'
 import { BusinessDomainsPage } from '../business-domains/business-domains-page'
 import { CredentialPurposesPage } from '../credential-purposes/credential-purposes-page'
+import { MasterDataSelect } from '../master-data-select'
 import { PrincipalsPage } from '../principals/principals-page'
 
 vi.mock('@/features/ai-governance/api', () => ({
@@ -504,6 +505,41 @@ describe('Business Domains page — §11-B.1 边界（Error ≠ Empty + retry）
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByText('Human Resources')).toBeInTheDocument()
   })
+
+  test('切换查询参数后新查询失败进入错误态，而非沿用旧数据冒充正常结果', async () => {
+    vi.mocked(listBusinessDomains)
+      .mockResolvedValueOnce({
+        items: [domain],
+        total: 1,
+        page: 1,
+        page_size: 20,
+      })
+      .mockRejectedValueOnce(new Error('boom'))
+    renderPage(<BusinessDomainsPage />)
+    // 第一次查询成功，页面已有数据
+    await screen.findByText('Human Resources')
+
+    // 改 keyword 触发新查询 → reject
+    await userEvent.type(
+      screen.getByPlaceholderText('Search by code or name...'),
+      'fin'
+    )
+    await waitFor(
+      () => expect(listBusinessDomains).toHaveBeenCalledWith(
+        expect.objectContaining({ keyword: 'fin' })
+      ),
+      { timeout: 2000 }
+    )
+
+    // 必须进入错误态，不得把旧数据当作新查询结果继续正常展示
+    expect(
+      await screen.findByText('Oops! Something went wrong')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Human Resources')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('No business domains found')
+    ).not.toBeInTheDocument()
+  })
 })
 
 describe('Principals page — §11-B.1 引用与关联边界', () => {
@@ -846,5 +882,90 @@ describe('Applications page — §11-B.1 引用与启用边界', () => {
     await waitFor(() =>
       expect(updateApplication).toHaveBeenCalledWith(6, { enabled: false })
     )
+  })
+
+  test('带关联筛选的页面切换参数后新查询失败进入错误态，而非沿用旧数据', async () => {
+    vi.mocked(listApplications)
+      .mockResolvedValueOnce({
+        items: [app],
+        total: 1,
+        page: 1,
+        page_size: 20,
+      })
+      .mockRejectedValueOnce(new Error('boom'))
+    vi.mocked(listBusinessDomains).mockResolvedValue({
+      items: [domain],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    vi.mocked(listOwnerTeams).mockResolvedValue({
+      items: [ownerTeam],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<ApplicationsPage />)
+    await screen.findByText('HR Chatbot')
+
+    // 改 keyword 触发新查询 → reject（Applications 含 business_domain/owner_team 关联筛选）
+    await userEvent.type(
+      screen.getByPlaceholderText('Search by code or name...'),
+      'fin'
+    )
+    await waitFor(
+      () => expect(listApplications).toHaveBeenCalledWith(
+        expect.objectContaining({ keyword: 'fin' })
+      ),
+      { timeout: 2000 }
+    )
+
+    expect(
+      await screen.findByText('Oops! Something went wrong')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('HR Chatbot')).not.toBeInTheDocument()
+    expect(screen.queryByText('No AI applications found')).not.toBeInTheDocument()
+  })
+})
+
+describe('MasterDataSelect — §11-B.1 收口（候选 Error ≠ Empty）', () => {
+  test('候选请求失败显示错误+Retry 而非空态，Retry 真实重取后选项出现', async () => {
+    const fetchPage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({
+        items: [domain],
+        total: 1,
+        page: 1,
+        page_size: 50,
+      })
+    renderPage(
+      <MasterDataSelect<GovernanceBusinessDomain>
+        value={null}
+        onChange={() => {}}
+        queryKey={['test-options']}
+        fetchPage={fetchPage}
+        itemToValue={(item) => item.id}
+        itemToLabel={(item) => item.domain_name}
+        placeholder='Select business domain'
+        emptyText='No business domain found'
+      />
+    )
+
+    // 打开下拉
+    await userEvent.click(
+      screen.getByRole('combobox', { name: 'Select business domain' })
+    )
+
+    // 初始查询 reject → Error 态：显示 Failed to load options，不显示 Empty 文案
+    expect(
+      await screen.findByText('Failed to load options')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('No business domain found')).not.toBeInTheDocument()
+
+    // Retry 真实调用 refetch → API 成功 → 选项出现
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Human Resources')).toBeInTheDocument()
+    expect(fetchPage).toHaveBeenCalledTimes(2)
   })
 })

@@ -1878,6 +1878,7 @@
     "Failed to initialize OAuth": "Không thể khởi tạo OAuth",
     "Failed to initialize system": "Không thể khởi tạo hệ thống",
     "Failed to load": "Tải thất bại",
+    "Failed to load options": "Không tải được các tùy chọn",
     "Failed to load API keys": "Không thể tải khóa API",
     "Failed to load billing history": "Không thể tải lịch sử thanh toán",
     "Failed to load enabled models": "Không thể tải các mô hình đã bật",

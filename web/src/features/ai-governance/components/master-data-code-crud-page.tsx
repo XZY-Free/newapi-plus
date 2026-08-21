@@ -267,7 +267,7 @@ export function MasterDataCodeCrudPage<
   const enabledValue = parseEnabledFilter(enabledFilter)
 
   // 列表加载
-  const { data, isLoading, isFetching, error, refetch } = useQueryData<T>({
+  const { data, isLoading, isFetching, isError, refetch } = useQueryData<T>({
     queryKey,
     page: tableState.pagination.pageIndex + 1,
     pageSize: tableState.pagination.pageSize,
@@ -353,7 +353,7 @@ export function MasterDataCodeCrudPage<
         columns={columns}
         isLoading={isLoading}
         isFetching={isFetching}
-        isError={error != null && data == null}
+        isError={isError}
         errorTitle={t('Oops! Something went wrong')}
         errorDescription={t('Failed to load')}
         onErrorRetry={() => void refetch()}

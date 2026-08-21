@@ -1878,6 +1878,7 @@
     "Failed to initialize OAuth": "OAuthの初期化に失敗しました",
     "Failed to initialize system": "システムの初期化に失敗しました",
     "Failed to load": "読み込みに失敗しました",
+    "Failed to load options": "オプションの読み込みに失敗しました",
     "Failed to load API keys": "APIキーの読み込みに失敗しました",
     "Failed to load billing history": "請求履歴の読み込みに失敗しました",
     "Failed to load enabled models": "有効なモデルの取得に失敗しました",

@@ -1878,6 +1878,7 @@
     "Failed to initialize OAuth": "Не удалось инициализировать OAuth",
     "Failed to initialize system": "Не удалось инициализировать систему",
     "Failed to load": "Не удалось загрузить",
+    "Failed to load options": "Не удалось загрузить варианты",
     "Failed to load API keys": "Не удалось загрузить API ключи",
     "Failed to load billing history": "Не удалось загрузить историю платежей",
     "Failed to load enabled models": "Не удалось загрузить включённые модели",

@@ -226,7 +226,7 @@ export function CredentialPurposesPage() {
   )?.value as string | undefined
   const enabledValue = parseEnabledFilter(enabledFilter)
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: [
       'ai-governance',
       'credential-purposes',
@@ -337,7 +337,7 @@ export function CredentialPurposesPage() {
         columns={columns}
         isLoading={isLoading}
         isFetching={isFetching}
-        isError={error != null && data == null}
+        isError={isError}
         errorTitle={t('Oops! Something went wrong')}
         errorDescription={t('Failed to load')}
         onErrorRetry={() => void refetch()}

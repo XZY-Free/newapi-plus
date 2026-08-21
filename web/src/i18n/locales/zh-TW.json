@@ -1878,6 +1878,7 @@
     "Failed to initialize OAuth": "初始化 OAuth 失敗",
     "Failed to initialize system": "系統初始化失敗",
     "Failed to load": "載入失敗",
+    "Failed to load options": "選項載入失敗",
     "Failed to load API keys": "載入 API 金鑰失敗",
     "Failed to load billing history": "載入收費歷史失敗",
     "Failed to load enabled models": "獲取啟用模型失敗",

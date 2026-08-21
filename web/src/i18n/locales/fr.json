@@ -1878,6 +1878,7 @@
     "Failed to initialize OAuth": "Échec de l'initialisation d'OAuth",
     "Failed to initialize system": "Échec de l'initialisation du système",
     "Failed to load": "Échec du chargement",
+    "Failed to load options": "Échec du chargement des options",
     "Failed to load API keys": "Échec du chargement des Clés API",
     "Failed to load billing history": "Échec du chargement de l'historique de facturation",
     "Failed to load enabled models": "Échec du chargement des modèles activés",

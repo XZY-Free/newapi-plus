@@ -1878,6 +1878,7 @@
     "Failed to initialize OAuth": "Failed to initialize OAuth",
     "Failed to initialize system": "Failed to initialize system",
     "Failed to load": "Failed to load",
+    "Failed to load options": "Failed to load options",
     "Failed to load API keys": "Failed to load API keys",
     "Failed to load billing history": "Failed to load billing history",
     "Failed to load enabled models": "Failed to load enabled models",

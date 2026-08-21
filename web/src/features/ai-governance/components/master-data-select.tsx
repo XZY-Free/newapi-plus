@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Check, ChevronsUpDown } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -97,9 +97,12 @@ export function MasterDataSelect<T>({
   const {
     data: items,
     isFetching,
+    isError,
+    error,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
+    refetch,
   } = useMasterDataOptions<T>({
     queryKey,
     fetchPage,
@@ -128,6 +131,32 @@ export function MasterDataSelect<T>({
 
   const display =
     selectedLabel ?? (value != null ? String(value) : placeholder)
+
+  // 空态四态区分：候选请求失败必须显示 Error（Failed to load options + Retry），
+  // 绝不能冒充 Empty；仅当请求成功且无候选时才显示 emptyText。
+  let emptyContent: ReactNode
+  if (isError) {
+    emptyContent = (
+      <div className='flex flex-col items-center gap-1.5 py-2 text-center'>
+        <span className='text-sm'>{t('Failed to load options')}</span>
+        {error != null && (
+          <span className='text-xs text-muted-foreground'>{error.message}</span>
+        )}
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          onClick={() => void refetch()}
+        >
+          {t('Retry')}
+        </Button>
+      </div>
+    )
+  } else if (isFetching && !items?.length) {
+    emptyContent = loadingText ?? t('Loading...')
+  } else {
+    emptyContent = emptyText
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -166,11 +195,7 @@ export function MasterDataSelect<T>({
             onValueChange={setQuery}
           />
           <CommandList className='max-h-[300px]'>
-            <CommandEmpty>
-              {isFetching && !items?.length
-                ? (loadingText ?? t('Loading...'))
-                : emptyText}
-            </CommandEmpty>
+            <CommandEmpty>{emptyContent}</CommandEmpty>
             {items?.map((item) => {
               const itemValue = itemToValue(item)
               return (
