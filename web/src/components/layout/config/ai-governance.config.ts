@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type TFunction } from 'i18next'
+import type { TFunction } from 'i18next'
 
 import {
   AI_GOVERNANCE_SECTION_META,
@@ -65,8 +65,8 @@ function getAIGovernanceNavGroups(t: TFunction): NavGroup[] {
   return SECTION_GROUPS.map((group) => ({
     id: group.titleKey
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, ''),
+      .replaceAll(/[^a-z0-9]+/g, '-')
+      .replaceAll(/^-|-$/g, ''),
     title: t(group.titleKey),
     items: group.sections.map((section) => ({
       title: titleByUrl.get(`/ai-governance/${section}`) ?? t(section),

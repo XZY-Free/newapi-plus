@@ -41,3 +41,8 @@ service/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
+
+# Tool/local-only state (never commit)
+# 注意：.omc/（个人 AI 工具本地状态）不在项目级 .gitignore，而是写入
+# .git/info/exclude（仅本机生效），避免把个人工具产物作为项目约定传播。
+**/_reports/

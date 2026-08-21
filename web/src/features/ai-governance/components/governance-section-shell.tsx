@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getRouteApi } from '@tanstack/react-router'
+import type { LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -27,38 +27,33 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 
-import {
-  AI_GOVERNANCE_DEFAULT_SECTION,
-  AI_GOVERNANCE_SECTION_META,
-  getGovernanceSectionMeta,
-  isGovernanceSectionId,
-} from '../section-registry'
-
-const route = getRouteApi('/_authenticated/ai-governance/$section')
-
 /**
  * 治理分区内容外壳（§11-A 骨架）。
  *
- * 读取当前 `$section` 路由参数，渲染分区标题、说明与作用域提示。
+ * 纯展示组件：不解析路由、不导入分区注册表、不自行解析 section。
+ * 标题/说明/图标全部通过 Props 传入，由 `section-registry`（唯一分区事实源）
+ * 在 `build` 时选择并注入。
+ *
  * 后续子批（§11-B～E）将逐区以完整管理界面替换本外壳的 `CardContent` 主体；
  * 本组件作为 §11-A 的过渡载体，不属于任何分区的最终状态。
  */
-export function GovernanceSectionShell() {
+export function GovernanceSectionShell({
+  titleKey,
+  descriptionKey,
+  icon: Icon,
+}: {
+  titleKey: string
+  descriptionKey: string
+  icon: LucideIcon
+}) {
   const { t } = useTranslation()
-  const params = route.useParams()
-
-  const sectionId = isGovernanceSectionId(params.section)
-    ? params.section
-    : AI_GOVERNANCE_DEFAULT_SECTION
-  const meta = getGovernanceSectionMeta(sectionId)
-  const { icon: Icon, descriptionKey } = AI_GOVERNANCE_SECTION_META[sectionId]
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className='flex items-center gap-2'>
           <Icon className='size-4 text-muted-foreground' />
-          <span>{t(meta.titleKey)}</span>
+          <span>{t(titleKey)}</span>
         </CardTitle>
         <CardDescription>{t(descriptionKey)}</CardDescription>
       </CardHeader>

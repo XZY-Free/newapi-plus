@@ -85,6 +85,18 @@ export type IdentityAssurance =
   | 'SIGNED_CONTEXT'
   | 'HYBRID_VERIFIED_CONTEXT'
 
+/**
+ * 审计事件专用身份取得方式：允许 “Profile 尚未解析出” 的空串态。
+ * 仅用于审计事件，不得污染 Identity Profile 配置所允许的三种值。
+ */
+export type AuditIdentityMode = IdentityMode | ''
+
+/**
+ * 审计事件专用身份可信等级：允许 “Profile 尚未解析出” 的空串态。
+ * 仅用于审计事件，不得污染 Identity Profile 配置所允许的三种值。
+ */
+export type AuditIdentityAssurance = IdentityAssurance | ''
+
 /** 签名密钥状态。 */
 export type SigningKeyStatus = 'ACTIVE' | 'RETIRING' | 'REVOKED'
 
@@ -243,6 +255,19 @@ export interface GovernanceRiskPosture {
   risk_level: CredentialRiskLevel
 }
 
+/**
+ * App Binding 行（后端 `ai_identity_profile_app_bindings`）。
+ * `replaceIdentityProfileAppBindings` 整体替换后返回该数组。
+ */
+export interface GovernanceIdentityAppBinding {
+  id: number
+  profile_id: number
+  app_id: number
+  enabled: boolean
+  created_at: number
+  updated_at: number
+}
+
 /** Profile 级请求频率限制配置。 */
 export interface GovernanceRateLimitConfig {
   enabled: boolean
@@ -308,8 +333,8 @@ export interface GovernanceAuditEvent {
   caller_id: string
   principal_id: number
   credential_purpose_id: number
-  identity_mode: IdentityMode
-  identity_assurance: IdentityAssurance
+  identity_mode: AuditIdentityMode
+  identity_assurance: AuditIdentityAssurance
   result: IdentityAuditResult
   reason_code: string
   claimed_root_app_id: string
@@ -534,7 +559,7 @@ export interface EnterpriseUsageAnomaly {
   baseline: number
   threshold: number
   model_name: string
-  identity_assurance: string
+  identity_assurance: UsageIdentityAssurance
 }
 
 export interface UsageRebuildResponse {

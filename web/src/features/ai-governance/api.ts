@@ -48,9 +48,13 @@ import type {
   GovernanceAuditEvent,
   GovernanceBusinessDomain,
   GovernanceCredentialPurpose,
+  GovernanceIdentityAppBinding,
+  GovernanceIdentityProfile,
   GovernanceIdentityProfileDetail,
   GovernanceOwnerTeam,
   GovernancePrincipal,
+  GovernancePrincipalSummary,
+  GovernancePurposeSummary,
   GovernanceSigningKey,
   GovernanceSigningKeyIssued,
   GovernanceSigningKeyRevokeResponse,
@@ -82,6 +86,39 @@ export function pickDefined<T extends object>(obj: T) {
     if (v !== undefined) out[k] = v
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Identity Profile 详情规范化（列表与详情共用同一 helper）
+// ---------------------------------------------------------------------------
+
+/**
+ * 后端 `buildIdentityProfileDetail` 在无关联 Principal / Purpose 时返回 `{}`
+ * 而非 `null`。在 API 边界统一将空对象规范化为 `null`，供页面直接使用
+ * `GovernanceIdentityProfileDetail.principal | purpose` 的可空类型。
+ */
+type RawIdentityProfileDetail = Omit<GovernanceIdentityProfileDetail, 'principal' | 'purpose'> & {
+  principal: GovernancePrincipalSummary | Record<string, never>
+  purpose: GovernancePurposeSummary | Record<string, never>
+}
+
+/** 空对象判定（后端无关联时返回 `{}`）。 */
+function isEmptyRecord(value: unknown): value is Record<string, never> {
+  return typeof value === 'object' && value !== null && Object.keys(value).length === 0
+}
+
+/**
+ * 统一规范化入口：列表分页项与单个详情都必须走本函数。
+ * `{}` → `null`；含主键的真实摘要原样保留。
+ */
+export function normalizeIdentityProfileDetail(
+  raw: RawIdentityProfileDetail
+): GovernanceIdentityProfileDetail {
+  return {
+    ...raw,
+    principal: isEmptyRecord(raw.principal) ? null : raw.principal,
+    purpose: isEmptyRecord(raw.purpose) ? null : raw.purpose,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,37 +344,46 @@ export async function updateApplication(
 export async function listIdentityProfiles(
   query: IdentityProfileListQuery = {}
 ): Promise<PagedResult<GovernanceIdentityProfileDetail>> {
-  const res = await api.get<ApiResponse<PagedResult<GovernanceIdentityProfileDetail>>>(
+  const res = await api.get<ApiResponse<PagedResult<RawIdentityProfileDetail>>>(
     '/api/ai-governance/identity-profiles',
     { params: pickDefined(query) }
   )
-  return res.data.data
+  const { items, ...paging } = res.data.data
+  return { ...paging, items: items.map(normalizeIdentityProfileDetail) }
 }
 
 export async function getIdentityProfile(
   id: number
 ): Promise<GovernanceIdentityProfileDetail> {
-  const res = await api.get<ApiResponse<GovernanceIdentityProfileDetail>>(
+  const res = await api.get<ApiResponse<RawIdentityProfileDetail>>(
     `/api/ai-governance/identity-profiles/${id}`
   )
-  return res.data.data
+  return normalizeIdentityProfileDetail(res.data.data)
 }
 
+/**
+ * 创建 Profile：后端 POST 仅返回裸 `AIIdentityProfile`，不返回聚合详情。
+ * 若需要 token/principal/risk/bindings 等聚合信息，须在写成功后重新查询详情/刷新列表。
+ */
 export async function createIdentityProfile(
   payload: CreateIdentityProfilePayload
-): Promise<GovernanceIdentityProfileDetail> {
-  const res = await api.post<ApiResponse<GovernanceIdentityProfileDetail>>(
+): Promise<GovernanceIdentityProfile> {
+  const res = await api.post<ApiResponse<GovernanceIdentityProfile>>(
     '/api/ai-governance/identity-profiles',
     payload
   )
   return res.data.data
 }
 
+/**
+ * 更新 Profile：后端 PUT 仅返回裸 `AIIdentityProfile`，不返回聚合详情。
+ * 若需要聚合信息，须在写成功后重新查询详情/刷新列表。
+ */
 export async function updateIdentityProfile(
   id: number,
   payload: UpdateIdentityProfilePayload
-): Promise<GovernanceIdentityProfileDetail> {
-  const res = await api.put<ApiResponse<GovernanceIdentityProfileDetail>>(
+): Promise<GovernanceIdentityProfile> {
+  const res = await api.put<ApiResponse<GovernanceIdentityProfile>>(
     `/api/ai-governance/identity-profiles/${id}`,
     payload
   )
@@ -347,8 +393,8 @@ export async function updateIdentityProfile(
 export async function replaceIdentityProfileAppBindings(
   id: number,
   payload: ReplaceAppBindingsPayload
-): Promise<unknown> {
-  const res = await api.put<ApiResponse<unknown>>(
+): Promise<GovernanceIdentityAppBinding[]> {
+  const res = await api.put<ApiResponse<GovernanceIdentityAppBinding[]>>(
     `/api/ai-governance/identity-profiles/${id}/app-bindings`,
     payload
   )
