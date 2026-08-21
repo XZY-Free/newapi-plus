@@ -25,7 +25,7 @@ For commercial licensing, please contact support@quantumnous.com
  *
  * §11-A 阶段先挂载共享外壳，后续子批（§11-B～E）逐区替换为完整实现。
  */
-import { createElement } from 'react'
+import { createElement, type ComponentType } from 'react'
 import {
   Boxes,
   Building2,
@@ -44,7 +44,13 @@ import {
   type SectionDefinition,
 } from '@/features/system-settings/utils/section-registry'
 
+import { ApplicationsPage } from './components/applications/applications-page'
+import { BusinessDomainsPage } from './components/business-domains/business-domains-page'
+import { CredentialPurposesPage } from './components/credential-purposes/credential-purposes-page'
 import { GovernanceSectionShell } from './components/governance-section-shell'
+import { PrincipalsPage } from './components/principals/principals-page'
+import { OwnerTeamsPage } from './components/owner-teams/owner-teams-page'
+import { UsageTeamsPage } from './components/usage-teams/usage-teams-page'
 
 export type GovernanceSectionId =
   | 'business-domains'
@@ -115,19 +121,35 @@ export const AI_GOVERNANCE_SECTION_META: Record<GovernanceSectionId, GovernanceS
   },
 }
 
+/**
+ * 已实现真实页面的分区。identity-profiles / identity-audit / usage 三区
+ * 在后续子批（§11-C/D/E）实现，保持 `GovernanceSectionShell`。
+ */
+const SECTION_PAGE: Partial<Record<GovernanceSectionId, ComponentType>> = {
+  'business-domains': BusinessDomainsPage,
+  'usage-teams': UsageTeamsPage,
+  'owner-teams': OwnerTeamsPage,
+  'credential-purposes': CredentialPurposesPage,
+  'principals': PrincipalsPage,
+  'applications': ApplicationsPage,
+}
+
 const AI_GOVERNANCE_SECTIONS: readonly SectionDefinition<Record<string, never>, []>[] = (
   Object.keys(AI_GOVERNANCE_SECTION_META) as GovernanceSectionId[]
 ).map((id) => {
   const meta = AI_GOVERNANCE_SECTION_META[id]
+  const PageComponent = SECTION_PAGE[id]
   return {
     id,
     titleKey: meta.titleKey,
     build: () =>
-      createElement(GovernanceSectionShell, {
-        titleKey: meta.titleKey,
-        descriptionKey: meta.descriptionKey,
-        icon: meta.icon,
-      }),
+      PageComponent
+        ? createElement(PageComponent)
+        : createElement(GovernanceSectionShell, {
+            titleKey: meta.titleKey,
+            descriptionKey: meta.descriptionKey,
+            icon: meta.icon,
+          }),
   }
 })
 
