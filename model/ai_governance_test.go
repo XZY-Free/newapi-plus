@@ -145,9 +145,10 @@ func TestAIGovernanceSigningKeyUniqueConstraint(t *testing.T) {
 	require.True(t, isUniqueViolation(err))
 }
 
-// 迁移注册：AIGovernanceModels 恰好返回 10 张表。
+// 迁移注册：AIGovernanceModels 恰好返回 11 张表
+// （第一批 10 张 + §12 企业用量整点投影 AIUsageHourly）。
 func TestAIGovernanceModelsCount(t *testing.T) {
-	require.Len(t, AIGovernanceModels(), 10)
+	require.Len(t, AIGovernanceModels(), 11)
 }
 
 // isUniqueViolation 判定 GORM 唯一约束冲突。

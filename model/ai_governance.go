@@ -2,9 +2,11 @@ package model
 
 // 第一批企业身份归因主数据 / 凭证治理 / 签名密钥 / 审计事件模型。
 //
-// 这 10 张表仅进入主库 DB（同时注册于 migrateDB 与 migrateDBFast），
-// 绝不进入 LOG_DB / ClickHouse。字段、索引、唯一约束、TableName 与
-// 三数据库兼容严格按文档第 6.2 ~ 6.12 节执行。
+// 本文件定义第一批 10 张表（§12 另在 ai_usage_hourly.go 增加第 11 张
+// 企业用量整点投影 AIUsageHourly，见 AIGovernanceModels）。这些主库表
+// 仅进入主库 DB（同时注册于 migrateDB 与 migrateDBFast），绝不进入
+// LOG_DB / ClickHouse。字段、索引、唯一约束、TableName 与三数据库
+// 兼容严格按文档第 6.2 ~ 6.12 节执行。
 
 import (
 	"errors"
@@ -211,7 +213,8 @@ func GetAIBusinessApplication(id int) (*AIApplication, error) {
 	return &app, nil
 }
 
-// aiGovernanceModels 返回第一批全部主库治理模型，供 migrateDB / migrateDBFast 共用。
+// AIGovernanceModels 返回全部主库治理模型（第一批 10 张 + §12 AIUsageHourly，
+// 共 11 张），供 migrateDB / migrateDBFast 共用。
 func AIGovernanceModels() []interface{} {
 	return []interface{}{
 		&AIBusinessDomain{},

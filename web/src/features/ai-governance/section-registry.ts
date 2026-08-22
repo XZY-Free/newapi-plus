@@ -47,6 +47,7 @@ import {
 import { ApplicationsPage } from './components/applications/applications-page'
 import { BusinessDomainsPage } from './components/business-domains/business-domains-page'
 import { CredentialPurposesPage } from './components/credential-purposes/credential-purposes-page'
+import { EnterpriseUsagePage } from './components/enterprise-usage/enterprise-usage-page'
 import { GovernanceSectionShell } from './components/governance-section-shell'
 import { IdentityAuditPage } from './components/identity-audit/identity-audit-page'
 import { IdentityProfilesPage } from './components/identity-profiles/identity-profiles-page'
@@ -124,8 +125,8 @@ export const AI_GOVERNANCE_SECTION_META: Record<GovernanceSectionId, GovernanceS
 }
 
 /**
- * 已实现真实页面的分区。identity-profiles 于 §11-C、identity-audit 于 §11-D 实现；
- * usage（§11-E）尚未实现，保持 `GovernanceSectionShell`。
+ * 已实现真实页面的分区。identity-profiles 于 §11-C、identity-audit 于 §11-D、
+ * usage（企业用量）于 §11-E 实现。
  */
 const SECTION_PAGE: Partial<Record<GovernanceSectionId, ComponentType>> = {
   'business-domains': BusinessDomainsPage,
@@ -136,6 +137,7 @@ const SECTION_PAGE: Partial<Record<GovernanceSectionId, ComponentType>> = {
   'applications': ApplicationsPage,
   'identity-profiles': IdentityProfilesPage,
   'identity-audit': IdentityAuditPage,
+  'usage': EnterpriseUsagePage,
 }
 
 const AI_GOVERNANCE_SECTIONS: readonly SectionDefinition<Record<string, never>, []>[] = (
