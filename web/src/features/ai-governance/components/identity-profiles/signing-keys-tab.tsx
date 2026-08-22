@@ -108,10 +108,11 @@ export function SigningKeysTab({
   const [revokeTarget, setRevokeTarget] = useState<GovernanceSigningKey | null>(null)
   const [isRevoking, setIsRevoking] = useState(false)
 
-  const refreshKeys = () => {
+  const refreshKeys = async () => {
     // 生命周期修改后必须重拉真实 listSigningKeys，让 UI 立即进入真实
     // ACTIVE/RETIRING/REVOKED 状态；Detail/List 刷新（onChanged）不替代它。
-    void keysQuery.refetch()
+    // await 完成后再结束 pending，避免服务器已变但按钮仍短暂用旧 hasActive。
+    await keysQuery.refetch()
     onChanged()
   }
 
@@ -127,7 +128,7 @@ export function SigningKeysTab({
       toast.success(
         hasActive ? t('Signing key rotated') : t('Signing key generated')
       )
-      refreshKeys()
+      await refreshKeys()
     } catch (error) {
       handleServerError(error)
     } finally {
@@ -157,7 +158,7 @@ export function SigningKeysTab({
       await revokeSigningKey(profile.id, revokeTarget.key_id)
       toast.success(t('Signing key revoked'))
       setRevokeTarget(null)
-      refreshKeys()
+      await refreshKeys()
     } catch (error) {
       handleServerError(error)
     } finally {
@@ -252,18 +253,21 @@ export function SigningKeysTab({
                     <dd className='font-mono'>{formatTimestamp(key.created_at)}</dd>
                   </div>
                 </dl>
-                <div className='flex justify-end'>
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='sm'
-                    className='text-destructive hover:text-destructive'
-                    onClick={() => setRevokeTarget(key)}
-                  >
-                    <Trash2 className='size-3.5' />
-                    {t('Revoke')}
-                  </Button>
-                </div>
+                {/* ACTIVE / RETIRING 可撤销；REVOKED 为只读终态，不显示 Revoke/Restore。 */}
+                {key.status !== 'REVOKED' && (
+                  <div className='flex justify-end'>
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='sm'
+                      className='text-destructive hover:text-destructive'
+                      onClick={() => setRevokeTarget(key)}
+                    >
+                      <Trash2 className='size-3.5' />
+                      {t('Revoke')}
+                    </Button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

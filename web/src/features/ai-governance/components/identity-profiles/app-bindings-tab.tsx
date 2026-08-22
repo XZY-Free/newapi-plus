@@ -129,7 +129,17 @@ export function AppBindingsTab({
           <ul className='flex flex-col gap-2'>
             {bindings.map((b) => {
               // 状态徽标表示 Application 当前 enabled（P1-4），非 binding 行 enabled。
-              const appEnabled = selectedMeta[b.app_id]?.enabled ?? false
+              // null = 加载中/读取失败（Unknown），绝不冒充 Disabled。
+              const fact = selectedMeta[b.app_id]
+              const appEnabled = fact?.enabled ?? null
+              let statusLabel: string
+              if (appEnabled === null) {
+                statusLabel = t('Unknown')
+              } else if (appEnabled) {
+                statusLabel = t('Enabled')
+              } else {
+                statusLabel = t('Disabled')
+              }
               return (
                 <li
                   key={b.id}
@@ -155,7 +165,7 @@ export function AppBindingsTab({
                         : 'bg-muted text-muted-foreground'
                     }`}
                   >
-                    {appEnabled ? t('Enabled') : t('Disabled')}
+                    {statusLabel}
                   </span>
                 </li>
               )

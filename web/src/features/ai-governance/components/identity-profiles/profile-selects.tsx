@@ -134,12 +134,13 @@ type ApplicationMultiSelectProps = {
   /**
    * 当前已选但不在「enabled 候选」列表中的元数据（如历史已停用的绑定应用）。
    * 由 App Binding 编辑（C.3）传入 `detail.bindings`；Create 无需传。
-   * 用于让已停用的已绑定应用仍以真实名称/code + Disabled 状态可见、可移除，
-   * 绝不静默消失。
+   * `enabled` 是 **Application 当前事实**（来自 useSelectedApplicationMeta，
+   * 精确 `getApplication` 读取），`null` 表示加载中/读取失败（Unknown），
+   * 不得冒充 Disabled。
    */
   selectedMeta?: Record<
     number,
-    { app_name: string; app_code: string; enabled: boolean }
+    { app_name: string; app_code: string; enabled: boolean | null }
   >
 }
 
@@ -200,6 +201,7 @@ export function ApplicationMultiSelect(props: ApplicationMultiSelectProps) {
     .map((id): SelectedEntry | null => {
       const candidate = candidateById.get(id)
       if (candidate) {
+        // 候选来自 enabled=true 的服务端搜索，即当前为 enabled。
         return {
           id,
           app_name: candidate.app_name,
@@ -333,9 +335,14 @@ export function ApplicationMultiSelect(props: ApplicationMultiSelectProps) {
               <span className='text-muted-foreground truncate'>
                 ({entry.app_code})
               </span>
-              {!entry.enabled && (
+              {entry.enabled === false && (
                 <span className='bg-muted text-muted-foreground rounded px-1 text-[10px] uppercase'>
                   {t('Disabled')}
+                </span>
+              )}
+              {entry.enabled == null && (
+                <span className='bg-muted text-muted-foreground rounded px-1 text-[10px] uppercase'>
+                  {t('Unknown')}
                 </span>
               )}
               <button
@@ -359,5 +366,5 @@ type SelectedEntry = {
   id: number
   app_name: string
   app_code: string
-  enabled: boolean
+  enabled: boolean | null
 }
