@@ -185,6 +185,7 @@ export function IdentityProfileDetailSheet({
                   if (!v) closeReconfigure(false)
                 }}
                 onSuccess={() => closeReconfigure(true)}
+                onFailed={() => refreshDetail()}
               />
             )}
           </div>

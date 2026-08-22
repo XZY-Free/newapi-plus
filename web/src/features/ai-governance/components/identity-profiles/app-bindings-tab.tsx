@@ -30,6 +30,7 @@ import { replaceIdentityProfileAppBindings } from '../../api'
 import { findIdentityProfileModeConfig } from '../../lib/identity-profile-mode'
 import type { GovernanceIdentityProfileDetail } from '../../types'
 import { ApplicationMultiSelect } from './profile-selects'
+import { useSelectedApplicationMeta } from './use-selected-application-meta'
 
 /**
  * App Bindings 页（§11-C §C.3 C）。
@@ -60,17 +61,10 @@ export function AppBindingsTab({
   const [appIds, setAppIds] = useState<number[]>(() =>
     bindings.map((b) => b.app_id)
   )
-  // 与 create 共用同一个选择器：已选但不在 enabled 候选列表中的（历史停用）绑定应用，
-  // 经 selectedMeta 传入以真实名称/code + Disabled 渲染。
-  const selectedMeta: Record<number, { app_name: string; app_code: string; enabled: boolean }> =
-    {}
-  for (const b of bindings) {
-    selectedMeta[b.app_id] = {
-      app_name: b.app_name,
-      app_code: b.app_code,
-      enabled: b.enabled,
-    }
-  }
+  // 与 create 共用同一个选择器。selectedMeta 用 Application 当前事实
+  //（useSelectedApplicationMeta 读 master-data enabled），而不是 binding.enabled
+  //（那是 Binding 行自身的 enabled，P1-4）。历史停用应用仍以真实 name/code + Disabled 渲染。
+  const selectedMeta = useSelectedApplicationMeta(bindings)
 
   // 详情重拉（如整体替换后）时重置本地集合，避免残留已被后端清除的 id。
   useEffect(() => {
@@ -133,35 +127,39 @@ export function AppBindingsTab({
         <section className={sideDrawerSectionClassName()}>
           <h3 className='text-sm font-semibold'>{t('Current Bindings')}</h3>
           <ul className='flex flex-col gap-2'>
-            {bindings.map((b) => (
-              <li
-                key={b.id}
-                className='flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2'
-              >
-                <div className='flex min-w-0 flex-col'>
-                  <span className='truncate text-sm font-medium'>
-                    {b.app_name}
-                    <span className='text-muted-foreground ml-1 text-xs'>
-                      ({b.app_code})
-                    </span>
-                  </span>
-                  <span className='text-muted-foreground truncate text-xs'>
-                    {[b.business_domain_name, b.owner_team_name]
-                      .filter(Boolean)
-                      .join(' · ') || '—'}
-                  </span>
-                </div>
-                <span
-                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase ${
-                    b.enabled
-                      ? 'bg-emerald-500/10 text-emerald-600'
-                      : 'bg-muted text-muted-foreground'
-                  }`}
+            {bindings.map((b) => {
+              // 状态徽标表示 Application 当前 enabled（P1-4），非 binding 行 enabled。
+              const appEnabled = selectedMeta[b.app_id]?.enabled ?? false
+              return (
+                <li
+                  key={b.id}
+                  className='flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2'
                 >
-                  {b.enabled ? t('Enabled') : t('Disabled')}
-                </span>
-              </li>
-            ))}
+                  <div className='flex min-w-0 flex-col'>
+                    <span className='truncate text-sm font-medium'>
+                      {b.app_name}
+                      <span className='text-muted-foreground ml-1 text-xs'>
+                        ({b.app_code})
+                      </span>
+                    </span>
+                    <span className='text-muted-foreground truncate text-xs'>
+                      {[b.business_domain_name, b.owner_team_name]
+                        .filter(Boolean)
+                        .join(' · ') || '—'}
+                    </span>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase ${
+                      appEnabled
+                        ? 'bg-emerald-500/10 text-emerald-600'
+                        : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {appEnabled ? t('Enabled') : t('Disabled')}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         </section>
       )}

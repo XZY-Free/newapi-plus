@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Copy, KeyRound, RefreshCw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -66,8 +66,11 @@ function statusVariant(
  * - Generate（无 ACTIVE）与 Rotate（有 ACTIVE）返回的 **secret 只存于本组件临时状态**，
  *   绝不进入 React Query 缓存、全局 store、localStorage / sessionStorage / URL、toast、
  *   console / 日志。列表只显示 key 元数据，绝不显示 secret / secret_ciphertext。
- * - One-time Secret 弹窗：仅显示一次；关闭即置空 secret 并 `mutation.reset()`；
- *   卸载后无 secret；不可重新查看、无假展示。
+ * - One-time Secret 弹窗：仅显示一次；关闭即置空 secret；卸载后无 secret；
+ *   不可重新查看、无假展示。
+ * - Generate / Rotate **不得使用 useMutation**：那会把含 secret 的响应存进
+ *   MutationCache。改用普通 async + 组件局部 pending/secret 状态，secret 只在
+ *   组件 state，QueryCache / MutationCache / 存储一律读不到。
  * - Rotate：旧 ACTIVE → RETIRING → expires_at=now+24h，新 → ACTIVE；文案明确
  *   「旧签名密钥仍有 24 小时宽限期」。无 ACTIVE 时显示 Generate，有 ACTIVE 时显示
  *   Rotate，绝不出现 "Regenerate"。
@@ -95,29 +98,46 @@ export function SigningKeysTab({
   const [issuedKey, setIssuedKey] = useState<GovernanceSigningKey | null>(null)
   const [secret, setSecret] = useState<string | null>(null)
 
+  // Generate / Rotate 用普通 async + 局部 pending 态，**绝不使用 useMutation**：
+  // TanStack Mutation 会把成功响应存进 MutationCache，而 generate/rotate 的响应含明文
+  // secret。改为普通调用后，secret 只出现在组件局部 state，QueryCache / MutationCache
+  // 一律读不到。
+  const [isIssuing, setIsIssuing] = useState(false)
+
   // 撤销确认弹窗（不可逆）。
   const [revokeTarget, setRevokeTarget] = useState<GovernanceSigningKey | null>(null)
   const [isRevoking, setIsRevoking] = useState(false)
 
-  const issueMutation = useMutation({
-    mutationFn: () =>
-      hasActive ? rotateSigningKey(profile.id) : generateSigningKey(profile.id),
-    onSuccess: (res: GovernanceSigningKeyIssued) => {
-      // secret 直接进组件状态，不经过 React Query 缓存。
+  const refreshKeys = () => {
+    // 生命周期修改后必须重拉真实 listSigningKeys，让 UI 立即进入真实
+    // ACTIVE/RETIRING/REVOKED 状态；Detail/List 刷新（onChanged）不替代它。
+    void keysQuery.refetch()
+    onChanged()
+  }
+
+  const handleIssue = async () => {
+    setIsIssuing(true)
+    try {
+      const res: GovernanceSigningKeyIssued = hasActive
+        ? await rotateSigningKey(profile.id)
+        : await generateSigningKey(profile.id)
+      // secret 直接进组件状态，绝不经过 React Query 缓存。
       setIssuedKey(res.key)
       setSecret(res.secret)
       toast.success(
         hasActive ? t('Signing key rotated') : t('Signing key generated')
       )
-      onChanged()
-    },
-    onError: handleServerError,
-  })
+      refreshKeys()
+    } catch (error) {
+      handleServerError(error)
+    } finally {
+      setIsIssuing(false)
+    }
+  }
 
   const closeSecretDialog = () => {
     setSecret(null)
     setIssuedKey(null)
-    issueMutation.reset()
   }
 
   const handleCopySecret = async () => {
@@ -137,7 +157,7 @@ export function SigningKeysTab({
       await revokeSigningKey(profile.id, revokeTarget.key_id)
       toast.success(t('Signing key revoked'))
       setRevokeTarget(null)
-      onChanged()
+      refreshKeys()
     } catch (error) {
       handleServerError(error)
     } finally {
@@ -157,8 +177,8 @@ export function SigningKeysTab({
           <Button
             type='button'
             variant='outline'
-            onClick={() => issueMutation.mutate()}
-            disabled={issueMutation.isPending}
+            onClick={() => void handleIssue()}
+            disabled={isIssuing}
           >
             {hasActive ? (
               <>

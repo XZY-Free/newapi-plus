@@ -40,6 +40,23 @@ function QuotaDisplay({ value }: { value: number }) {
   )
 }
 
+/** 返回 Token Security Status 的 i18n key。1 Enabled / 2 Disabled / 3 Expired /
+ * 4 Exhausted / 其他 Unknown —— 绝不得把所有非 1 状态折叠成 Disabled。 */
+function tokenStatusKey(status: number): string {
+  switch (status) {
+    case 1:
+      return 'Enabled'
+    case 2:
+      return 'Disabled'
+    case 3:
+      return 'Expired'
+    case 4:
+      return 'Exhausted'
+    default:
+      return 'Unknown'
+  }
+}
+
 /**
  * 安全与风险只读页（§11-C §C.3 D）。
  *
@@ -63,7 +80,7 @@ export function SecurityRiskTab({
         <h3 className='text-sm font-semibold'>{t('API Key Security')}</h3>
         <dl className='grid grid-cols-2 gap-4'>
           <DetailField label={t('Status')}>
-            <span className='text-sm'>{token.status === 1 ? t('Enabled') : t('Disabled')}</span>
+            <span className='text-sm'>{t(tokenStatusKey(token.status))}</span>
           </DetailField>
           <DetailField label={t('Expired At')}>
             {token.expired_time > 0 ? formatTimestamp(token.expired_time) : t('Never')}

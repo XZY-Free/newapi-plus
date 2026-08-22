@@ -67,6 +67,7 @@ import {
 import type { GovernanceIdentityProfileDetail } from '../../types'
 import { DetailField } from './detail-field'
 import { ApplicationMultiSelect, PrincipalSelect, PurposeSelect } from './profile-selects'
+import { useSelectedApplicationMeta } from './use-selected-application-meta'
 
 const PRESET_VALUE_SEPARATOR = '|'
 
@@ -116,11 +117,14 @@ export function ReconfigureIdentityModeSheet({
   open,
   onOpenChange,
   onSuccess,
+  onFailed,
 }: {
   detail: GovernanceIdentityProfileDetail
   open: boolean
   onOpenChange: (open: boolean) => void
   onSuccess: () => void
+  /** 任一步失败后触发：强制重新 getIdentityProfile + 刷新列表（P1-3）。 */
+  onFailed: () => void
 }) {
   const { t } = useTranslation()
   const { profile, principal, purpose, bindings } = detail
@@ -143,15 +147,8 @@ export function ReconfigureIdentityModeSheet({
     assurance
   )
 
-  const selectedMeta: Record<number, { app_name: string; app_code: string; enabled: boolean }> =
-    {}
-  for (const b of bindings) {
-    selectedMeta[b.app_id] = {
-      app_name: b.app_name,
-      app_code: b.app_code,
-      enabled: b.enabled,
-    }
-  }
+  // selectedMeta 用 Application 当前 enabled（P1-4），非 binding 行 enabled。
+  const selectedMeta = useSelectedApplicationMeta(bindings)
 
   const handlePresetChange = (composite: string) => {
     const preset = PRESET_OPTIONS.find((o) => o.value === composite)?.config
@@ -194,8 +191,10 @@ export function ReconfigureIdentityModeSheet({
       toast.success(t('Identity mode reconfigured'))
       onSuccess()
     } catch (error) {
-      // 任一步失败：Profile 保持停用，透出真实错误，不自动回滚/启用。
+      // 任一步失败：Profile 保持停用，透出真实错误，不自动回滚/启用，
+      // 并强制重新拉取真实详情（此时服务器 Bindings 可能已改变，P1-3）。
       handleServerError(error)
+      onFailed()
       onOpenChange(false)
     } finally {
       setIsSubmitting(false)

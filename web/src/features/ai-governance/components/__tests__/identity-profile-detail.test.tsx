@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -143,10 +143,27 @@ function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } })
 }
 
-function renderWithClient(ui: ReactNode) {
-  return render(
-    <QueryClientProvider client={makeClient()}>{ui}</QueryClientProvider>
-  )
+function renderWithClient(ui: ReactNode, client: QueryClient = makeClient()) {
+  render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+  return { client }
+}
+
+/** 断言 secret 绝不出现在 QueryCache / MutationCache 的任何缓存数据里。 */
+function expectNoSecretInCaches(client: QueryClient, secret: string) {
+  const serializedQueries = client
+    .getQueryCache()
+    .findAll()
+    .map((q) => JSON.stringify(q.state.data ?? null))
+  expect(
+    serializedQueries.every((s) => !s.includes(secret))
+  ).toBe(true)
+  const serializedMutations = client
+    .getMutationCache()
+    .getAll()
+    .map((m) => JSON.stringify(m.state.data ?? null))
+  expect(
+    serializedMutations.every((s) => !s.includes(secret))
+  ).toBe(true)
 }
 
 beforeEach(() => {
@@ -234,6 +251,31 @@ describe('Identity Profile Detail sheet', () => {
     })
     expect(reconfigure).toBeDisabled()
   })
+
+  test('Token Security Status maps Expired / Exhausted / Unknown, not collapsed to Disabled (P1-5)', async () => {
+    const cases: Array<[number, string]> = [
+      [3, 'Expired'],
+      [4, 'Exhausted'],
+      [99, 'Unknown'],
+    ]
+    for (const [status, label] of cases) {
+      const detail = baseDetail()
+      detail.token = { ...detail.token, status }
+      vi.mocked(getIdentityProfile).mockResolvedValue(detail)
+      renderWithClient(
+        <IdentityProfileDetailSheet
+          profileId={1}
+          open
+          onOpenChange={() => undefined}
+          onChanged={() => undefined}
+        />
+      )
+      await screen.findByText('My WorkBuddy Key')
+      await userEvent.click(screen.getByRole('tab', { name: 'Security & Risk' }))
+      expect(await screen.findByText(label)).toBeInTheDocument()
+      cleanup()
+    }
+  })
 })
 
 describe('Signing Keys lifecycle (DYNAMIC/HYBRID only)', () => {
@@ -263,7 +305,7 @@ describe('Signing Keys lifecycle (DYNAMIC/HYBRID only)', () => {
       key: activeKey('ACTIVE'),
       secret: 'sk_live_s3cret',
     })
-    renderWithClient(
+    const { client } = renderWithClient(
       <IdentityProfileDetailSheet
         profileId={1}
         open
@@ -274,6 +316,7 @@ describe('Signing Keys lifecycle (DYNAMIC/HYBRID only)', () => {
     await screen.findByText('My WorkBuddy Key')
     await userEvent.click(screen.getByRole('tab', { name: 'Signing Keys' }))
 
+    const generateCalls = vi.mocked(listSigningKeys).mock.calls.length
     await userEvent.click(
       await screen.findByRole('button', { name: 'Generate Signing Key' })
     )
@@ -285,23 +328,30 @@ describe('Signing Keys lifecycle (DYNAMIC/HYBRID only)', () => {
     })
     expect(within(dialog).getByText('sk_live_s3cret')).toBeInTheDocument()
 
+    // P1-2：Generate 后必须重拉真实 listSigningKeys，让 UI 进入真实 ACTIVE 状态。
+    await waitFor(() =>
+      expect(vi.mocked(listSigningKeys).mock.calls.length).toBeGreaterThan(generateCalls)
+    )
+
     // 关闭即清除；重新打开（未再次 Generate）不得恢复 secret。
     await userEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
     await waitFor(() =>
       expect(screen.queryByText('sk_live_s3cret')).not.toBeInTheDocument()
     )
+    // P1-1：secret 只出现在组件临时 state，QueryCache / MutationCache 一律读不到。
+    expectNoSecretInCaches(client, 'sk_live_s3cret')
     // 列表仅显示 key 元数据，绝不含 secret。
     expect(screen.queryByText('sk_live_s3cret')).not.toBeInTheDocument()
   })
 
-  test('DYNAMIC with an ACTIVE key offers Rotate (not Generate) and sends rotateSigningKey', async () => {
+  test('DYNAMIC with an ACTIVE key offers Rotate (not Generate), rotates, refetches and never caches the secret', async () => {
     vi.mocked(getIdentityProfile).mockResolvedValue(baseDetail())
     vi.mocked(listSigningKeys).mockResolvedValue([activeKey('ACTIVE')])
     vi.mocked(rotateSigningKey).mockResolvedValue({
       key: { ...activeKey('ACTIVE'), key_id: 'key_new' },
       secret: 'sk_rotated_secret',
     })
-    renderWithClient(
+    const { client } = renderWithClient(
       <IdentityProfileDetailSheet
         profileId={1}
         open
@@ -319,6 +369,7 @@ describe('Signing Keys lifecycle (DYNAMIC/HYBRID only)', () => {
     expect(screen.queryByRole('button', { name: 'Generate Signing Key' })).not.toBeInTheDocument()
     expect(screen.queryByText('Regenerate')).not.toBeInTheDocument()
 
+    const rotateCalls = vi.mocked(listSigningKeys).mock.calls.length
     await userEvent.click(
       screen.getByRole('button', { name: 'Rotate Signing Key' })
     )
@@ -329,9 +380,15 @@ describe('Signing Keys lifecycle (DYNAMIC/HYBRID only)', () => {
         'Rotating retires the current ACTIVE signing key into a 24-hour grace period and issues a new ACTIVE key. The old signing key keeps a 24-hour grace period.'
       )
     ).toBeInTheDocument()
+    // P1-2：Rotate 后必须重拉真实 listSigningKeys（旧 ACTIVE→RETIRING、新→ACTIVE）。
+    await waitFor(() =>
+      expect(vi.mocked(listSigningKeys).mock.calls.length).toBeGreaterThan(rotateCalls)
+    )
+    // P1-1：rotated secret 同样绝不出现在任何缓存里。
+    expectNoSecretInCaches(client, 'sk_rotated_secret')
   })
 
-  test('revoke requires confirmation and calls revokeSigningKey with the key id', async () => {
+  test('revoke requires confirmation, revokes, and refetches the signing key list', async () => {
     vi.mocked(getIdentityProfile).mockResolvedValue(baseDetail())
     vi.mocked(listSigningKeys).mockResolvedValue([activeKey('ACTIVE')])
     vi.mocked(revokeSigningKey).mockResolvedValue({ revoked: true })
@@ -347,6 +404,7 @@ describe('Signing Keys lifecycle (DYNAMIC/HYBRID only)', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Signing Keys' }))
     await screen.findByText('key_abc')
 
+    const revokeCalls = vi.mocked(listSigningKeys).mock.calls.length
     await userEvent.click(screen.getAllByRole('button', { name: 'Revoke' })[0])
     const confirm = await screen.findByRole('alertdialog', {
       name: 'Revoke this signing key?',
@@ -357,6 +415,10 @@ describe('Signing Keys lifecycle (DYNAMIC/HYBRID only)', () => {
       expect(revokeSigningKey).toHaveBeenCalledWith(1, 'key_abc')
     )
     expect(mockedToast.success).toHaveBeenCalledWith('Signing key revoked')
+    // P1-2：Revoke 后重拉真实 listSigningKeys（对应 Key 显示 REVOKED）。
+    await waitFor(() =>
+      expect(vi.mocked(listSigningKeys).mock.calls.length).toBeGreaterThan(revokeCalls)
+    )
   })
 })
 
@@ -396,18 +458,56 @@ describe('App Bindings whole-set replace', () => {
     )
     expect(mockedToast.success).toHaveBeenCalledWith('App bindings updated')
   })
+
+  test('a disabled application shows Disabled even when the binding row itself is enabled (P1-4)', async () => {
+    // binding.enabled=true，但 Application 不在 enabled 候选集（即当前已停用）。
+    // 状态必须来自 Application 当前事实，而不是 binding.enabled。
+    vi.mocked(getIdentityProfile).mockResolvedValue(baseDetail())
+    vi.mocked(listSigningKeys).mockResolvedValue([])
+    mockEmptyApps() // 应用 11 不在 enabled 候选集 → application.enabled=false
+    vi.mocked(replaceIdentityProfileAppBindings).mockResolvedValue([])
+    renderWithClient(
+      <IdentityProfileDetailSheet
+        profileId={1}
+        open
+        onOpenChange={() => undefined}
+        onChanged={() => undefined}
+      />
+    )
+    await screen.findByText('My WorkBuddy Key')
+    await userEvent.click(screen.getByRole('tab', { name: 'App Bindings' }))
+
+    // 应用 11 仍以真实名称/code 显示，且明确标记 Disabled（Application 状态）。
+    await screen.findAllByText('HR Bot')
+    const disabledBadges = await screen.findAllByText('Disabled')
+    expect(disabledBadges.length).toBeGreaterThan(0)
+  })
 })
+
+/** Reconfigure 表单渲染 ApplicationMultiSelect + useSelectedApplicationMeta，
+ * 两者都会调用 listApplications（P1-4 读 Application 当前 enabled）。 */
+function mockEmptyApps() {
+  vi.mocked(listApplications).mockResolvedValue({
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 50,
+  })
+}
 
 describe('Reconfigure Identity Mode flow', () => {
   test('applies App Bindings first, then the profile patch', async () => {
     vi.mocked(replaceIdentityProfileAppBindings).mockResolvedValue([])
     vi.mocked(updateIdentityProfile).mockResolvedValue(baseDetail().profile)
+    mockEmptyApps()
+    const onFailed = vi.fn()
     renderWithClient(
       <ReconfigureIdentityModeSheet
         detail={baseDetail()}
         open
         onOpenChange={() => undefined}
         onSuccess={() => undefined}
+        onFailed={onFailed}
       />
     )
 
@@ -434,17 +534,22 @@ describe('Reconfigure Identity Mode flow', () => {
         credential_purpose_id: 0,
       })
     )
+    // 成功路径不触发失败强制重拉。
+    expect(onFailed).not.toHaveBeenCalled()
   })
 
-  test('a failed profile patch surfaces the error and does not auto-enable', async () => {
+  test('a failed profile patch surfaces the error, does not auto-enable, and forces a detail refetch (P1-3)', async () => {
     vi.mocked(replaceIdentityProfileAppBindings).mockResolvedValue([])
     vi.mocked(updateIdentityProfile).mockRejectedValue(new Error('patch boom'))
+    mockEmptyApps()
+    const onFailed = vi.fn()
     renderWithClient(
       <ReconfigureIdentityModeSheet
         detail={baseDetail()}
         open
         onOpenChange={() => undefined}
         onSuccess={() => undefined}
+        onFailed={onFailed}
       />
     )
 
@@ -455,6 +560,40 @@ describe('Reconfigure Identity Mode flow', () => {
     await waitFor(() => expect(mockedToast.error).toHaveBeenCalled())
     expect(mockedToast.success).not.toHaveBeenCalledWith(
       'Identity mode reconfigured'
+    )
+    // P1-3：任一步失败都必须强制重新拉取真实详情。
+    await waitFor(() => expect(onFailed).toHaveBeenCalled())
+  })
+
+  test('Replace succeeds but Update fails → the detail sheet forces a real getIdentityProfile refetch (P1-3)', async () => {
+    vi.mocked(getIdentityProfile).mockResolvedValue(baseDetail())
+    vi.mocked(listSigningKeys).mockResolvedValue([])
+    mockEmptyApps()
+    vi.mocked(replaceIdentityProfileAppBindings).mockResolvedValue([])
+    vi.mocked(updateIdentityProfile).mockRejectedValue(new Error('patch boom'))
+    renderWithClient(
+      <IdentityProfileDetailSheet
+        profileId={1}
+        open
+        onOpenChange={() => undefined}
+        onChanged={() => undefined}
+      />
+    )
+    await screen.findByText('My WorkBuddy Key')
+    const profileFetches = vi.mocked(getIdentityProfile).mock.calls.length
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Reconfigure Identity Mode' })
+    )
+    const callerInput = await screen.findByLabelText('Caller ID')
+    await userEvent.clear(callerInput)
+    await userEvent.type(callerInput, 'x')
+    await userEvent.click(screen.getByRole('button', { name: 'Reconfigure' }))
+
+    // Bindings 已成功替换、Update 失败：必须重新拉取真实详情（服务器已改变）。
+    await waitFor(() => expect(updateIdentityProfile).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(vi.mocked(getIdentityProfile).mock.calls.length).toBeGreaterThan(profileFetches)
     )
   })
 })
