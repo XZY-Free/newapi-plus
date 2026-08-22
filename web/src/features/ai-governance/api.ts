@@ -457,13 +457,13 @@ export async function listIdentityAuditEvents(
 }
 
 // ---------------------------------------------------------------------------
-// 企业用量（§12：stats 返回裸数组，非分页）
+// 企业用量（§12 / E.2 P1-E：stats 服务端分页，返回统一 PagedResult）
 // ---------------------------------------------------------------------------
 
 export async function listEnterpriseUsage(
   filter: EnterpriseUsageFilter = {}
-): Promise<EnterpriseUsageRow[]> {
-  const res = await api.get<ApiResponse<EnterpriseUsageRow[]>>(
+): Promise<PagedResult<EnterpriseUsageRow>> {
+  const res = await api.get<ApiResponse<PagedResult<EnterpriseUsageRow>>>(
     '/api/ai-governance/usage/stats',
     { params: pickDefined(filter) }
   )

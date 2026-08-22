@@ -73,3 +73,45 @@ func TestParseUsageAttributionNone(t *testing.T) {
 		t.Fatal("空 map 不应被识别为可信归因")
 	}
 }
+
+// E.2 P1-B：强身份未验证 → 清空 Caller/App 维度并降级为 UNVERIFIED，保留 profile_id。
+func TestNormalizeStrongUnverifiedClearsAppAttribution(t *testing.T) {
+	d := &UsageProjectionDim{
+		ProfileID: 9, CallerKey: "caller-9", RootAppCode: "app-wb", AppID: 7,
+		AppBusinessDomainID: 2, OwnerTeamID: 4,
+		IdentityAssurance: "SIGNED_CONTEXT", ClientVerified: false,
+	}
+	d.NormalizeStrongUnverified()
+	if d.ProfileID != 9 {
+		t.Fatalf("保留 profile_id, got %d", d.ProfileID)
+	}
+	if d.CallerKey != "" || d.RootAppCode != "" || d.AppID != 0 ||
+		d.AppBusinessDomainID != 0 || d.OwnerTeamID != 0 {
+		t.Fatalf("未验证强身份应清空 Caller/App 维度: %+v", d)
+	}
+	if d.IdentityAssurance != "UNVERIFIED" {
+		t.Fatalf("应降级为 UNVERIFIED, got %s", d.IdentityAssurance)
+	}
+}
+
+// E.2 P1-B：HYBRID_VERIFIED_CONTEXT 未验证同样清空；CREDENTIAL_ONLY 不受影响。
+func TestNormalizeStrongUnverifiedOnlyStrongAssurances(t *testing.T) {
+	// HYBRID_VERIFIED_CONTEXT + 未验证 → 降级清空。
+	d := &UsageProjectionDim{CallerKey: "c", RootAppCode: "a", IdentityAssurance: "HYBRID_VERIFIED_CONTEXT", ClientVerified: false}
+	d.NormalizeStrongUnverified()
+	if d.CallerKey != "" || d.IdentityAssurance != "UNVERIFIED" {
+		t.Fatalf("HYBRID 未验证应清空: %+v", d)
+	}
+	// CREDENTIAL_ONLY + 未验证 → 不动（固定 App 可信登记）。
+	e := &UsageProjectionDim{CallerKey: "c", RootAppCode: "a", IdentityAssurance: "CREDENTIAL_ONLY", ClientVerified: false}
+	e.NormalizeStrongUnverified()
+	if e.CallerKey != "c" || e.RootAppCode != "a" || e.IdentityAssurance != "CREDENTIAL_ONLY" {
+		t.Fatalf("CREDENTIAL_ONLY 不应被改: %+v", e)
+	}
+	// 已验证强身份 → 不动。
+	v := &UsageProjectionDim{CallerKey: "c", RootAppCode: "a", IdentityAssurance: "SIGNED_CONTEXT", ClientVerified: true}
+	v.NormalizeStrongUnverified()
+	if v.CallerKey != "c" || v.IdentityAssurance != "SIGNED_CONTEXT" {
+		t.Fatalf("已验证强身份不应被改: %+v", v)
+	}
+}

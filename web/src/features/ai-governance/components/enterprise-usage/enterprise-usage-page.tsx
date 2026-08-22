@@ -52,14 +52,12 @@ import type {
   UsageIdentityAssurance,
 } from '../../types'
 import {
-  BusinessDomainSelect,
-  OwnerTeamSelect,
-  UsageTeamSelect,
-} from '../master-data-selects'
-import {
+  UsageBusinessDomainSelect,
+  UsageOwnerTeamSelect,
   UsagePrincipalSelect,
   UsageProfileSelect,
   UsagePurposeSelect,
+  UsageUsageTeamSelect,
 } from './enterprise-usage-selects'
 
 const ASSURANCE_OPTIONS: readonly UsageIdentityAssurance[] = [
@@ -93,6 +91,23 @@ function verifiedVariant(verified: boolean): 'success' | 'neutral' {
   return verified ? 'success' : 'neutral'
 }
 
+/** 归因维度 ID 单元格：id<=0 显示 —（该维度不适用）。E.2 P1-F 企业归因列复用。 */
+function dimensionCell(value: number) {
+  return (
+    <span className='font-mono text-sm'>{value > 0 ? value : '—'}</span>
+  )
+}
+
+/**
+ * 平均时延（毫秒）= duration_ms_total / request_count。
+ * E.2 P1-F：request_count 可能为 0（Task Billing 调账行不制造请求），此时不能除零，
+ * 显示 —。时长单位已在后端统一为毫秒（NewAPI Log.UseTime 秒 → ms）。
+ */
+function avgLatencyMs(row: { request_count: number; duration_ms_total: number }) {
+  if (row.request_count <= 0) return '—'
+  return `${Math.round(row.duration_ms_total / row.request_count)} ms`
+}
+
 function toUnixSec(date?: Date): number | undefined {
   return date ? Math.floor(date.getTime() / 1000) : undefined
 }
@@ -112,10 +127,17 @@ export function EnterpriseUsagePage() {
   const isMobile = useMediaQuery('(max-width: 640px)')
 
   // ---- 统计筛选（全部为后端真实参数） ----
+  // E.2 P1-E：默认时间窗口=最近 7 天（有界窗口），页面打开不扫描全量历史；
+  // 「Clear All Filters」也回到该默认窗口，而非清空时间范围。
+  const defaultBucketRange = () => {
+    const end = new Date()
+    const start = new Date(end.getTime() - 7 * 24 * 3600 * 1000)
+    return { start, end }
+  }
   const [bucketRange, setBucketRange] = useState<{
     start?: Date
     end?: Date
-  }>({})
+  }>(defaultBucketRange)
   const [profileId, setProfileId] = useState<number | null>(null)
   const [principalId, setPrincipalId] = useState<number | null>(null)
   const [purposeId, setPurposeId] = useState<number | null>(null)
@@ -153,9 +175,19 @@ export function EnterpriseUsagePage() {
     identity_assurance: assurance || undefined,
   }
 
+  // E.2 P1-E：真正的服务端分页——page/page_size 随 query 变化，逐页向后端取数。
+  const statsPage = statsState.pagination.pageIndex + 1
+  const statsPageSize = statsState.pagination.pageSize
   const statsQuery = useQuery({
-    queryKey: ['ai-governance', 'enterprise-usage-stats', filter],
-    queryFn: () => listEnterpriseUsage(filter),
+    queryKey: [
+      'ai-governance',
+      'enterprise-usage-stats',
+      filter,
+      statsPage,
+      statsPageSize,
+    ],
+    queryFn: () =>
+      listEnterpriseUsage({ ...filter, page: statsPage, page_size: statsPageSize }),
     placeholderData: (prev) => prev,
   })
 
@@ -170,6 +202,55 @@ export function EnterpriseUsagePage() {
         </div>
       ),
       size: 170,
+    },
+    {
+      accessorKey: 'profile_id',
+      header: t('Profile ID'),
+      meta: { mobileHidden: true },
+      cell: ({ row }) => dimensionCell(row.original.profile_id),
+      size: 100,
+    },
+    {
+      accessorKey: 'principal_id',
+      header: t('Principal'),
+      meta: { mobileHidden: true },
+      cell: ({ row }) => dimensionCell(row.original.principal_id),
+      size: 100,
+    },
+    {
+      accessorKey: 'credential_purpose_id',
+      header: t('Purpose'),
+      meta: { mobileHidden: true },
+      cell: ({ row }) => dimensionCell(row.original.credential_purpose_id),
+      size: 100,
+    },
+    {
+      accessorKey: 'usage_business_domain_id',
+      header: t('Usage Business Domain'),
+      meta: { mobileHidden: true },
+      cell: ({ row }) => dimensionCell(row.original.usage_business_domain_id),
+      size: 100,
+    },
+    {
+      accessorKey: 'usage_team_id',
+      header: t('Usage Team'),
+      meta: { mobileHidden: true },
+      cell: ({ row }) => dimensionCell(row.original.usage_team_id),
+      size: 100,
+    },
+    {
+      accessorKey: 'app_business_domain_id',
+      header: t('App Business Domain'),
+      meta: { mobileHidden: true },
+      cell: ({ row }) => dimensionCell(row.original.app_business_domain_id),
+      size: 100,
+    },
+    {
+      accessorKey: 'owner_team_id',
+      header: t('Owner Team'),
+      meta: { mobileHidden: true },
+      cell: ({ row }) => dimensionCell(row.original.owner_team_id),
+      size: 100,
     },
     {
       accessorKey: 'caller_key',
@@ -301,10 +382,19 @@ export function EnterpriseUsagePage() {
       ),
       size: 110,
     },
+    {
+      accessorKey: 'avg_latency_ms',
+      header: t('Avg Latency'),
+      meta: { mobileHidden: true },
+      cell: ({ row }) => (
+        <span className='font-mono text-sm'>{avgLatencyMs(row.original)}</span>
+      ),
+      size: 110,
+    },
   ]
 
   const { table: statsTable } = useDataTable({
-    data: statsQuery.data ?? [],
+    data: statsQuery.data?.items ?? [],
     columns,
     columnFilters: statsState.columnFilters,
     globalFilter: statsState.globalFilter,
@@ -313,6 +403,9 @@ export function EnterpriseUsagePage() {
     onGlobalFilterChange: statsState.onGlobalFilterChange,
     onColumnFiltersChange: statsState.onColumnFiltersChange,
     ensurePageInRange: statsState.ensurePageInRange,
+    // E.2 P1-E：服务端分页——由后端 total 计算页数，前端只翻页不裁切全量。
+    manualPagination: true,
+    totalCount: statsQuery.data?.total ?? 0,
   })
 
   // ---- 异常 ----
@@ -508,7 +601,7 @@ export function EnterpriseUsagePage() {
     filter.identity_assurance != null
 
   const resetStatsFilters = () => {
-    setBucketRange({})
+    setBucketRange(defaultBucketRange())
     setProfileId(null)
     setPrincipalId(null)
     setPurposeId(null)
@@ -604,7 +697,7 @@ export function EnterpriseUsagePage() {
           </div>
           <div>
             {fieldLabel(t('Usage Business Domain'))}
-            <BusinessDomainSelect
+            <UsageBusinessDomainSelect
               value={usageDomainId}
               onChange={(v) => {
                 setUsageDomainId(v)
@@ -615,7 +708,7 @@ export function EnterpriseUsagePage() {
           </div>
           <div>
             {fieldLabel(t('Usage Team'))}
-            <UsageTeamSelect
+            <UsageUsageTeamSelect
               value={usageTeamId}
               onChange={(v) => {
                 setUsageTeamId(v)
@@ -626,7 +719,7 @@ export function EnterpriseUsagePage() {
           </div>
           <div>
             {fieldLabel(t('App Business Domain'))}
-            <BusinessDomainSelect
+            <UsageBusinessDomainSelect
               value={appDomainId}
               onChange={(v) => {
                 setAppDomainId(v)
@@ -637,7 +730,7 @@ export function EnterpriseUsagePage() {
           </div>
           <div>
             {fieldLabel(t('Owner Team'))}
-            <OwnerTeamSelect
+            <UsageOwnerTeamSelect
               value={ownerTeamId}
               onChange={(v) => {
                 setOwnerTeamId(v)

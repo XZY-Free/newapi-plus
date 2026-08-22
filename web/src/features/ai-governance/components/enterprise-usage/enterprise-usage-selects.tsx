@@ -19,9 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import {
+  listBusinessDomains,
   listCredentialPurposes,
   listIdentityProfiles,
+  listOwnerTeams,
   listPrincipals,
+  listUsageTeams,
 } from '../../api'
 import { MasterDataSelect } from '../master-data-select'
 
@@ -82,6 +85,7 @@ export function UsagePrincipalSelect(props: UsageFilterSelectProps) {
   return (
     <MasterDataSelect<{
       id: number
+      principal_code: string
       principal_name: string
     }>
       id={props.id}
@@ -92,19 +96,19 @@ export function UsagePrincipalSelect(props: UsageFilterSelectProps) {
       className={props.className}
       queryKey={['ai-governance', 'usage-principal-options']}
       fetchPage={({ page, page_size, keyword }) =>
-        listPrincipals({ page, page_size, keyword, enabled: true }).then(
-          (res) => ({
-            ...res,
-            items: res.items.map((p) => ({
-              id: p.id,
-              principal_name: p.principal_name,
-            })),
-          })
-        )
+        // E.2 P1-G：历史分析不限 enabled，允许选已停用但历史仍在用的主体。
+        listPrincipals({ page, page_size, keyword }).then((res) => ({
+          ...res,
+          items: res.items.map((p) => ({
+            id: p.id,
+            principal_code: p.principal_code,
+            principal_name: p.principal_name,
+          })),
+        }))
       }
       itemToValue={(item) => item.id}
       itemToLabel={(item) => item.principal_name}
-      itemToDescription={(item) => `${t('Principal ID')}: ${item.id}`}
+      itemToDescription={(item) => item.principal_code}
       placeholder={t('Select principal')}
       emptyText={t('No principal found')}
     />
@@ -117,6 +121,7 @@ export function UsagePurposeSelect(props: UsageFilterSelectProps) {
   return (
     <MasterDataSelect<{
       id: number
+      purpose_code: string
       purpose_name: string
     }>
       id={props.id}
@@ -127,21 +132,136 @@ export function UsagePurposeSelect(props: UsageFilterSelectProps) {
       className={props.className}
       queryKey={['ai-governance', 'usage-purpose-options']}
       fetchPage={({ page, page_size, keyword }) =>
-        listCredentialPurposes({ page, page_size, keyword, enabled: true }).then(
-          (res) => ({
-            ...res,
-            items: res.items.map((p) => ({
-              id: p.id,
-              purpose_name: p.purpose_name,
-            })),
-          })
-        )
+        // E.2 P1-G：历史分析不限 enabled，允许选已停用但历史仍在用的用途。
+        listCredentialPurposes({ page, page_size, keyword }).then((res) => ({
+          ...res,
+          items: res.items.map((p) => ({
+            id: p.id,
+            purpose_code: p.purpose_code,
+            purpose_name: p.purpose_name,
+          })),
+        }))
       }
       itemToValue={(item) => item.id}
       itemToLabel={(item) => item.purpose_name}
-      itemToDescription={(item) => `${t('Purpose ID')}: ${item.id}`}
+      itemToDescription={(item) => item.purpose_code}
       placeholder={t('Select credential purpose')}
       emptyText={t('No credential purpose found')}
+    />
+  )
+}
+
+/**
+ * 业务领域选择器（企业用量历史分析专用，E.2 P1-G）。
+ * 与 §11-B 冻结构建用 `BusinessDomainSelect`（enabled:true）不同，历史分析必须
+ * 能选已停用但历史仍在用的领域，故不限制 enabled。
+ */
+export function UsageBusinessDomainSelect(props: UsageFilterSelectProps) {
+  const { t } = useTranslation()
+  return (
+    <MasterDataSelect<{
+      id: number
+      domain_code: string
+      domain_name: string
+    }>
+      id={props.id}
+      value={props.value}
+      onChange={props.onChange}
+      defaultLabel={props.defaultLabel}
+      disabled={props.disabled}
+      className={props.className}
+      queryKey={['ai-governance', 'usage-business-domain-options']}
+      fetchPage={({ page, page_size, keyword }) =>
+        listBusinessDomains({ page, page_size, keyword }).then((res) => ({
+          ...res,
+          items: res.items.map((d) => ({
+            id: d.id,
+            domain_code: d.domain_code,
+            domain_name: d.domain_name,
+          })),
+        }))
+      }
+      itemToValue={(item) => item.id}
+      itemToLabel={(item) => item.domain_name}
+      itemToDescription={(item) => item.domain_code}
+      placeholder={t('Select business domain')}
+      emptyText={t('No business domain found')}
+    />
+  )
+}
+
+/**
+ * 使用团队选择器（企业用量历史分析专用，E.2 P1-G）。
+ * Usage Team = 凭证使用人所属团队，与 Application Owner Team 不是一回事。
+ */
+export function UsageUsageTeamSelect(props: UsageFilterSelectProps) {
+  const { t } = useTranslation()
+  return (
+    <MasterDataSelect<{
+      id: number
+      team_code: string
+      team_name: string
+    }>
+      id={props.id}
+      value={props.value}
+      onChange={props.onChange}
+      defaultLabel={props.defaultLabel}
+      disabled={props.disabled}
+      className={props.className}
+      queryKey={['ai-governance', 'usage-usage-team-options']}
+      fetchPage={({ page, page_size, keyword }) =>
+        listUsageTeams({ page, page_size, keyword }).then((res) => ({
+          ...res,
+          items: res.items.map((team) => ({
+            id: team.id,
+            team_code: team.team_code,
+            team_name: team.team_name,
+          })),
+        }))
+      }
+      itemToValue={(item) => item.id}
+      itemToLabel={(item) => item.team_name}
+      itemToDescription={(item) => item.team_code}
+      placeholder={t('Select usage team')}
+      emptyText={t('No usage team found')}
+    />
+  )
+}
+
+/**
+ * 应用负责团队选择器（企业用量历史分析专用，E.2 P1-G）。
+ * Application Owner Team = AI 应用建设/维护/运营负责团队。
+ */
+export function UsageOwnerTeamSelect(props: UsageFilterSelectProps) {
+  const { t } = useTranslation()
+  return (
+    <MasterDataSelect<{
+      id: number
+      team_code: string
+      team_name: string
+    }>
+      id={props.id}
+      value={props.value}
+      onChange={props.onChange}
+      defaultLabel={props.defaultLabel}
+      disabled={props.disabled}
+      className={props.className}
+      queryKey={['ai-governance', 'usage-owner-team-options']}
+      fetchPage={({ page, page_size, keyword }) =>
+        listOwnerTeams({ page, page_size, keyword }).then((res) => ({
+          ...res,
+          items: res.items.map((team) => ({
+            id: team.id,
+            team_code: team.team_code,
+            team_name: team.team_name,
+          })),
+        }))
+      }
+      itemToValue={(item) => item.id}
+      itemToLabel={(item) => item.team_name}
+      itemToDescription={(item) => item.team_code}
+      placeholder={t('Select owner team')}
+      emptyText={t('No owner team found')}
     />
   )
 }

@@ -6,7 +6,12 @@ import (
 	"github.com/QuantumNous/new-api/model"
 )
 
-// §12.6：BuildUsageProjectionRow 将单条日志归一到整点投影行（成功计数）。
+// other 由 ai_attribution 快照 + 可选 task_id 构成。
+func withAttribution(attr map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{"ai_attribution": attr}
+}
+
+// §12.6 / E.2 P1-C：模型请求事实（无 task_id）正常计数，时长由秒换算为毫秒。
 func TestBuildUsageProjectionRowSuccess(t *testing.T) {
 	attribution := map[string]interface{}{
 		"profile_id": 9, "principal_id": 1, "credential_purpose_id": 10,
@@ -17,7 +22,7 @@ func TestBuildUsageProjectionRowSuccess(t *testing.T) {
 		CreatedAt: 1750000000, ModelName: "gpt-4o", Type: model.LogTypeConsume,
 		PromptTokens: 100, CompletionTokens: 50, Quota: 3000, UseTime: 1200,
 	}
-	row, ok := BuildUsageProjectionRow(log, attribution, bucketHour(log.CreatedAt))
+	row, ok := BuildUsageProjectionRow(log, withAttribution(attribution), bucketHour(log.CreatedAt))
 	if !ok {
 		t.Fatal("应生成投影行")
 	}
@@ -30,7 +35,8 @@ func TestBuildUsageProjectionRowSuccess(t *testing.T) {
 	if row.InputTokens != 100 || row.OutputTokens != 50 || row.TotalTokens != 150 {
 		t.Fatalf("token 错误: %+v", row)
 	}
-	if row.QuotaNet != 3000 || row.DurationMsTotal != 1200 {
+	// P1-F：UseTime 单位为秒，DurationMsTotal 为毫秒。
+	if row.QuotaNet != 3000 || row.DurationMsTotal != 1200*1000 {
 		t.Fatalf("quota/duration 错误: %+v", row)
 	}
 	if row.ProfileID != 9 || row.CredentialPurposeID != 10 || row.UsageTeamID != 55 {
@@ -42,7 +48,7 @@ func TestBuildUsageProjectionRowSuccess(t *testing.T) {
 func TestBuildUsageProjectionRowError(t *testing.T) {
 	attribution := map[string]interface{}{"profile_id": 9, "credential_purpose_id": 10}
 	log := &model.Log{CreatedAt: 1750000000, Type: model.LogTypeError, PromptTokens: 10, Quota: 500}
-	row, ok := BuildUsageProjectionRow(log, attribution, bucketHour(log.CreatedAt))
+	row, ok := BuildUsageProjectionRow(log, withAttribution(attribution), bucketHour(log.CreatedAt))
 	if !ok {
 		t.Fatal("应生成投影行")
 	}
@@ -56,6 +62,91 @@ func TestBuildUsageProjectionRowNoAttribution(t *testing.T) {
 	log := &model.Log{CreatedAt: 1750000000, Type: model.LogTypeConsume, PromptTokens: 10}
 	if _, ok := BuildUsageProjectionRow(log, map[string]interface{}{}, bucketHour(log.CreatedAt)); ok {
 		t.Fatal("无归因不应产生投影行")
+	}
+}
+
+// E.2 P1-C：任务差额结算（正差额补扣）不制造模型请求，Quota 为净 +。
+func TestBuildUsageProjectionRowTaskBillingRecalc(t *testing.T) {
+	attribution := map[string]interface{}{"profile_id": 9, "credential_purpose_id": 10, "identity_assurance": "CREDENTIAL_ONLY"}
+	other := withAttribution(attribution)
+	other["task_id"] = "task-abc"
+	log := &model.Log{CreatedAt: 1750000000, Type: model.LogTypeConsume, PromptTokens: 10, Quota: 500}
+	row, ok := BuildUsageProjectionRow(log, other, bucketHour(log.CreatedAt))
+	if !ok {
+		t.Fatal("应生成投影行")
+	}
+	if row.RequestCount != 0 || row.SuccessCount != 0 || row.ErrorCount != 0 {
+		t.Fatalf("Task Billing 调整不得累计请求: req=%d ok=%d err=%d", row.RequestCount, row.SuccessCount, row.ErrorCount)
+	}
+	if row.QuotaNet != 500 {
+		t.Fatalf("补扣净额应为 +500, got %d", row.QuotaNet)
+	}
+}
+
+// E.2 P1-C：任务退款不制造模型请求，Quota 为净 -（不得把退款正数再累计到 quota_net）。
+func TestBuildUsageProjectionRowTaskBillingRefund(t *testing.T) {
+	attribution := map[string]interface{}{"profile_id": 9, "credential_purpose_id": 10, "identity_assurance": "CREDENTIAL_ONLY"}
+	other := withAttribution(attribution)
+	other["task_id"] = "task-abc"
+	log := &model.Log{CreatedAt: 1750000000, Type: model.LogTypeRefund, PromptTokens: 0, Quota: 300}
+	row, ok := BuildUsageProjectionRow(log, other, bucketHour(log.CreatedAt))
+	if !ok {
+		t.Fatal("应生成投影行")
+	}
+	if row.RequestCount != 0 || row.SuccessCount != 0 || row.ErrorCount != 0 {
+		t.Fatalf("Task Billing 退款不得累计请求: req=%d ok=%d err=%d", row.RequestCount, row.SuccessCount, row.ErrorCount)
+	}
+	if row.QuotaNet != -300 {
+		t.Fatalf("退款净额应为 -300, got %d", row.QuotaNet)
+	}
+}
+
+// E.2 P1-B：强身份（SIGNED_CONTEXT）但未验证的流量清空 Caller/App 维度并降级为 UNVERIFIED。
+func TestBuildUsageProjectionRowStrongUnverifiedNormalized(t *testing.T) {
+	attribution := map[string]interface{}{
+		"profile_id":                9,
+		"caller_id":                 "caller-9",
+		"root_app_id":               "app-wb",
+		"application_business_domain_id": 2,
+		"owner_team_id":                   4,
+		"identity_assurance":              "SIGNED_CONTEXT",
+		"client_verified":                 false,
+	}
+	log := &model.Log{CreatedAt: 1750000000, ModelName: "gpt-4o", Type: model.LogTypeConsume, Quota: 100}
+	row, ok := BuildUsageProjectionRow(log, withAttribution(attribution), bucketHour(log.CreatedAt))
+	if !ok {
+		t.Fatal("应生成投影行")
+	}
+	if row.ProfileID != 9 {
+		t.Fatalf("保留 profile_id 供治理调查, got %d", row.ProfileID)
+	}
+	if row.CallerKey != "" || row.RootAppCode != "" || row.AppID != 0 ||
+		row.AppBusinessDomainID != 0 || row.OwnerTeamID != 0 {
+		t.Fatalf("未验证强身份应清空 Caller/App 维度: %+v", row)
+	}
+	if row.IdentityAssurance != "UNVERIFIED" {
+		t.Fatalf("应降级为 UNVERIFIED, got %s", row.IdentityAssurance)
+	}
+}
+
+// E.2 P1-B：CREDENTIAL_ONLY（固定 App 可信登记）不受未验证规范化影响。
+func TestBuildUsageProjectionRowCredentialOnlyUnaffected(t *testing.T) {
+	attribution := map[string]interface{}{
+		"profile_id": 9, "credential_purpose_id": 10,
+		"caller_id": "caller-9", "root_app_id": "app-wb",
+		"application_business_domain_id": 2, "owner_team_id": 4,
+		"identity_assurance": "CREDENTIAL_ONLY", "client_verified": false,
+	}
+	log := &model.Log{CreatedAt: 1750000000, ModelName: "gpt-4o", Type: model.LogTypeConsume, Quota: 100}
+	row, ok := BuildUsageProjectionRow(log, withAttribution(attribution), bucketHour(log.CreatedAt))
+	if !ok {
+		t.Fatal("应生成投影行")
+	}
+	if row.CallerKey != "caller-9" || row.RootAppCode != "app-wb" {
+		t.Fatalf("CREDENTIAL_ONLY 不应被清空 Caller/App: %+v", row)
+	}
+	if row.IdentityAssurance != "CREDENTIAL_ONLY" {
+		t.Fatalf("CREDENTIAL_ONLY 不应被降级, got %s", row.IdentityAssurance)
 	}
 }
 

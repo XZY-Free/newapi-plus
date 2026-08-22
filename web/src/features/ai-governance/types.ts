@@ -532,8 +532,10 @@ export interface EnterpriseUsageRow {
   updated_at: number
 }
 
-/** 企业用量统计筛选（后端 parseUsageFilter，逐项对齐）。 */
+/** 企业用量统计筛选（后端 parseUsageFilter，逐项对齐）。page/page_size 走服务端分页（E.2 P1-E）。 */
 export interface EnterpriseUsageFilter {
+  page?: number
+  page_size?: number
   bucket_start?: number
   bucket_end?: number
   profile_id?: number

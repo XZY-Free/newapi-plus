@@ -556,6 +556,7 @@
     "AWS": "AWS",
     "AWS Bedrock Claude Compat": "AWS Bedrock Claude Compat",
     "AWS Key Format": "Format de clé AWS",
+    "Avg Latency": "Latence moyenne",
     "Azure": "Azure",
     "AZURE_OPENAI_ENDPOINT *": "AZURE_OPENAI_ENDPOINT *",
     "Back": "Retour",

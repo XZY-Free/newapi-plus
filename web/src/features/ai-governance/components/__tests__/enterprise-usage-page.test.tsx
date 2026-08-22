@@ -111,6 +111,14 @@ const emptyPage = <T,>(): PagedResult<T> => ({
   page_size: 50,
 })
 
+// E.2 P1-E：企业用量 stats 走服务端分页，mock 返回统一 PagedResult。
+const usagePage = (items: EnterpriseUsageRow[]): PagedResult<EnterpriseUsageRow> => ({
+  items,
+  total: items.length,
+  page: 1,
+  page_size: 50,
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   // 主数据选择器挂载即预取，全部置空以免误命中真实后端。
@@ -130,7 +138,7 @@ beforeEach(() => {
 
 describe('Enterprise Usage page', () => {
   test('loads and renders usage stats with client_verified and assurance', async () => {
-    vi.mocked(listEnterpriseUsage).mockResolvedValue([row])
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(usagePage([row]))
     vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([])
     renderPage(<EnterpriseUsagePage />)
 
@@ -151,9 +159,11 @@ describe('Enterprise Usage page', () => {
   })
 
   test('shows Unverified for client_verified=false rows', async () => {
-    vi.mocked(listEnterpriseUsage).mockResolvedValue([
-      { ...row, client_verified: false, identity_assurance: 'UNVERIFIED' },
-    ])
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(
+      usagePage([
+        { ...row, client_verified: false, identity_assurance: 'UNVERIFIED' },
+      ])
+    )
     vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([])
     renderPage(<EnterpriseUsagePage />)
 
@@ -164,7 +174,7 @@ describe('Enterprise Usage page', () => {
   })
 
   test('renders the empty state when no stats match the filters', async () => {
-    vi.mocked(listEnterpriseUsage).mockResolvedValue([])
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(usagePage([]))
     vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([])
     renderPage(<EnterpriseUsagePage />)
 
@@ -184,7 +194,7 @@ describe('Enterprise Usage page', () => {
   })
 
   test('sends the caller_key filter to the backend as a real param', async () => {
-    vi.mocked(listEnterpriseUsage).mockResolvedValue([row])
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(usagePage([row]))
     vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([])
     renderPage(<EnterpriseUsagePage />)
     await screen.findByText('svc-pipeline')
@@ -198,8 +208,31 @@ describe('Enterprise Usage page', () => {
     )
   })
 
+  test('stats sends page/page_size to the backend (server pagination)', async () => {
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(usagePage([row]))
+    vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([])
+    renderPage(<EnterpriseUsagePage />)
+    await screen.findByText('svc-pipeline')
+
+    await waitFor(() =>
+      expect(listEnterpriseUsage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 1, page_size: 20 })
+      )
+    )
+  })
+
+  test('renders avg latency from duration_ms_total / request_count', async () => {
+    // 5000ms 总时长 / 100 请求 = 50ms。
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(usagePage([row]))
+    vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([])
+    renderPage(<EnterpriseUsagePage />)
+    // 先等待行稳定连接，再断言平均时延单元格（避免骨架态竞态）。
+    await screen.findByText('svc-pipeline')
+    expect(screen.getByText('50 ms')).toBeInTheDocument()
+  })
+
   test('renders usage anomalies', async () => {
-    vi.mocked(listEnterpriseUsage).mockResolvedValue([])
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(usagePage([]))
     vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([
       {
         profile_id: 12,
@@ -224,7 +257,7 @@ describe('Enterprise Usage page', () => {
   })
 
   test('rebuild is disabled until a real Unix range is picked', async () => {
-    vi.mocked(listEnterpriseUsage).mockResolvedValue([])
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(usagePage([]))
     vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([])
     renderPage(<EnterpriseUsagePage />)
 
@@ -238,7 +271,7 @@ describe('Enterprise Usage page', () => {
   })
 
   test('rebuild is a confirmed Root action that reports processed_logs', async () => {
-    vi.mocked(listEnterpriseUsage).mockResolvedValue([])
+    vi.mocked(listEnterpriseUsage).mockResolvedValue(usagePage([]))
     vi.mocked(listEnterpriseUsageAnomalies).mockResolvedValue([])
     vi.mocked(rebuildEnterpriseUsage).mockResolvedValue({ processed_logs: 42 })
     renderPage(<EnterpriseUsagePage />)

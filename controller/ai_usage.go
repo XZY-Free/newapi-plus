@@ -29,15 +29,18 @@ func parseUsageFilter(c *gin.Context) model.UsageProjectionFilter {
 	return f
 }
 
-// GetEnterpriseUsageStats 企业用量统计（§12.7）。返回投影明细，供前端按
-// 领域/组/人/用途/App/Caller/Model/Assurance 分组展示。
+// GetEnterpriseUsageStats 企业用量统计（§12.7 / E.2 P1-E 服务端分页）。
+// 返回 items/total/page/page_size，排序 bucket_time DESC, id DESC。
 func GetEnterpriseUsageStats(c *gin.Context) {
-	rows, err := service.QueryUsageStats(parseUsageFilter(c))
+	page, pageSize := aiGovernancePagination(c)
+	rows, total, err := service.QueryUsageStats(parseUsageFilter(c), page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query usage stats failed: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"items": rows, "total": total, "page": page, "page_size": pageSize,
+	}})
 }
 
 // RebuildEnterpriseUsageProjection 重建指定时间范围的用量投影（§12.6，Root-only）。
@@ -57,8 +60,8 @@ func RebuildEnterpriseUsageProjection(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"processed_logs": total}})
 }
 
-// GetEnterpriseUsageAnomalies 弱身份确定性异常检测（§12.5）。
-// query: bucket_start, bucket_end（整点 Unix 秒）。
+// GetEnterpriseUsageAnomalies 弱身份确定性异常检测（§12.5 / E.2 P1-D）。
+// query: bucket_start, bucket_end（Unix 秒，后端自身规范化到整点小时）。
 func GetEnterpriseUsageAnomalies(c *gin.Context) {
 	start, _ := strconv.ParseInt(c.Query("bucket_start"), 10, 64)
 	end, _ := strconv.ParseInt(c.Query("bucket_end"), 10, 64)
@@ -68,6 +71,10 @@ func GetEnterpriseUsageAnomalies(c *gin.Context) {
 	if end == 0 {
 		end = start + 3600
 	}
-	anomalies := service.DetectUsageAnomalies(c.Request.Context(), start, end)
+	anomalies, err := service.DetectUsageAnomalies(c.Request.Context(), start, end)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query usage anomalies failed: " + err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": anomalies})
 }

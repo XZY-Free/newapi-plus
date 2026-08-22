@@ -19,17 +19,47 @@ import (
 const usageProjectionPageSize = 1000
 
 // BuildUsageProjectionRow 由单条日志归一到一行整点投影（纯函数，可测）。
-// logType 用于判定成功/错误：LogTypeError 计为 error，其余计入 success（Consume/TaskBilling）。
-func BuildUsageProjectionRow(log *model.Log, a map[string]interface{}, bucketTime int64) (*model.AIUsageHourly, bool) {
+// other 是日志的完整 Other map（含 ai_attribution 与 task 计费标记）。
+//
+// 区分两类日志：
+//   - 模型请求事实（Consume/Error，无 task_id）：request_count=1，success/error 正常计数。
+//   - 异步 Task Billing 调整（补扣/退款/重算，带 task_id）：request/success/error 均 +0，
+//     Quota 为净变化（Consume→+quota，Refund→-quota），不把退款正数再累计到 quota_net。
+//
+// 身份规范化（P1-B）与时长单位换算（UseTime=秒 → ms，P1-F）在此统一处理。
+func BuildUsageProjectionRow(log *model.Log, other map[string]interface{}, bucketTime int64) (*model.AIUsageHourly, bool) {
+	if other == nil {
+		return nil, false
+	}
+	a, _ := other["ai_attribution"].(map[string]interface{})
 	dim, hasAttr := model.ParseUsageAttribution(a)
 	if !hasAttr {
 		return nil, false
 	}
+	dim.NormalizeStrongUnverified() // P1-B：强身份未验证流量清空 Caller/App 维度
 	dim.BucketTime = bucketTime
 	dim.ModelName = log.ModelName
 	dim.AppID = model.ResolveAppIDFromCode(dim.RootAppCode)
 
 	row := model.AIUsageHourlyRow(dim)
+	row.InputTokens = int64(log.PromptTokens)
+	row.OutputTokens = int64(log.CompletionTokens)
+	row.TotalTokens = int64(log.PromptTokens + log.CompletionTokens)
+	row.DurationMsTotal = int64(log.UseTime) * 1000 // P1-F：NewAPI Log.UseTime 单位为秒
+
+	if isTaskBillingAdjustment(other) {
+		// P1-C：异步计费调整不制造额外模型请求，仅记录净 Quota 变化。
+		row.RequestCount = 0
+		row.SuccessCount = 0
+		row.ErrorCount = 0
+		if log.Type == model.LogTypeRefund {
+			row.QuotaNet = -int64(log.Quota) // 退款 → 负净额
+		} else {
+			row.QuotaNet = int64(log.Quota) // 补扣 → 正净额
+		}
+		return &row, true
+	}
+
 	row.RequestCount = 1
 	row.SuccessCount = 0
 	row.ErrorCount = 0
@@ -38,12 +68,15 @@ func BuildUsageProjectionRow(log *model.Log, a map[string]interface{}, bucketTim
 	} else {
 		row.SuccessCount = 1
 	}
-	row.InputTokens = int64(log.PromptTokens)
-	row.OutputTokens = int64(log.CompletionTokens)
-	row.TotalTokens = int64(log.PromptTokens + log.CompletionTokens)
 	row.QuotaNet = int64(log.Quota)
-	row.DurationMsTotal = int64(log.UseTime)
 	return &row, true
+}
+
+// isTaskBillingAdjustment 判断日志是否为异步 Task Billing 调整。
+// 原始任务提交用 is_task=true（无 task_id），而 Refund/Recalculate 均带 task_id（E.2 P1-C）。
+func isTaskBillingAdjustment(other map[string]interface{}) bool {
+	taskID, _ := other["task_id"].(string)
+	return taskID != ""
 }
 
 // bucketHour 将 Unix 秒归一到整点。
@@ -52,17 +85,18 @@ func bucketHour(ts int64) int64 {
 }
 
 // ProjectUsageRange 将 [start, end]（Unix 秒）内 Log 归一到整点投影，并原子替换该范围。
-// 幂等；失败不留下半清空数据（§12.6）。
+// 幂等；失败不留下半清空数据（§12.6 / E.2 P1-A）。
+//
+// 输入先规范化为完整小时 bucketStart/bucketEnd（粒度固定为整点小时），读取覆盖这些
+// 完整小时的 Log，全部解析/聚合成功后经 ReplaceUsageProjectionRange 在单事务内
+// 原子替换。绝不在读取/计算完成前删除旧投影：任何读取、Context、解析或数据库错误
+// 发生在 Replace 之前时，原投影完整保留。
 func ProjectUsageRange(ctx context.Context, start, end int64) (int, error) {
 	if end <= start {
 		return 0, nil
 	}
 	bucketStart := bucketHour(start)
 	bucketEnd := bucketHour(end)
-	// 先清空目标范围，避免旧数据混入（§12.6 原子替换语义）。
-	if err := model.DeleteUsageProjectionRange(bucketStart, bucketEnd); err != nil {
-		return 0, err
-	}
 
 	rows := make([]*model.AIUsageHourly, 0, 256)
 	seen := make(map[string]*model.AIUsageHourly) // dimension_hash -> row，先累加再一次性写回
@@ -84,11 +118,7 @@ func ProjectUsageRange(ctx context.Context, start, end int64) (int, error) {
 			if err != nil || other == nil {
 				continue
 			}
-			a, _ := other["ai_attribution"].(map[string]interface{})
-			if a == nil {
-				continue
-			}
-			row, ok := BuildUsageProjectionRow(log, a, bucketHour(log.CreatedAt))
+			row, ok := BuildUsageProjectionRow(log, other, bucketHour(log.CreatedAt))
 			if !ok {
 				continue
 			}
@@ -137,7 +167,7 @@ func parseLogOther(other string) (map[string]interface{}, error) {
 	return m, nil
 }
 
-// QueryUsageStats 按筛选条件聚合企业用量（§12.7），返回投影明细行。
-func QueryUsageStats(f model.UsageProjectionFilter) ([]*model.AIUsageHourly, error) {
-	return model.QueryUsageRows(f)
+// QueryUsageStats 按筛选条件分页聚合企业用量（§12.7 / E.2 P1-E），返回一页明细与总数。
+func QueryUsageStats(f model.UsageProjectionFilter, page, pageSize int) ([]*model.AIUsageHourly, int64, error) {
+	return model.QueryUsageRowsPage(f, page, pageSize)
 }

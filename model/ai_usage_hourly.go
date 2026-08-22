@@ -136,6 +136,29 @@ func (d UsageProjectionDim) CanonicalAssurance() string {
 	return d.IdentityAssurance
 }
 
+// NormalizeStrongUnverified 规范化强身份但未验证的流量（§12.3 / E.2 P1-B）。
+//
+// SIGNED_CONTEXT 或 HYBRID_VERIFIED_CONTEXT 且 client_verified=false 的流量，其
+// caller/root_app 未经网关核验，不得污染正式 Caller/App 统计：清空相关维度并降级为
+// UNVERIFIED，保留 profile_id 供治理调查。
+//
+// 不影响 STATIC/APPLICATION + CREDENTIAL_ONLY：固定 App 是网关可信登记事实，即使
+// client_verified=false 也允许应用责任归因，因此不在本规范化范围。
+func (d *UsageProjectionDim) NormalizeStrongUnverified() {
+	if d == nil {
+		return
+	}
+	if (d.IdentityAssurance == "SIGNED_CONTEXT" || d.IdentityAssurance == "HYBRID_VERIFIED_CONTEXT") && !d.ClientVerified {
+		d.CallerKey = ""
+		d.RootAppCode = ""
+		d.AppID = 0
+		d.AppBusinessDomainID = 0
+		d.OwnerTeamID = 0
+		d.IdentityAssurance = "UNVERIFIED"
+		d.ClientVerified = false
+	}
+}
+
 // UpsertUsageHourly 将一行累加到对应 dimension_hash 桶（主库 DB，原子 upsert）。
 // 不存在则插入，存在则累加度量与请求计数。
 func UpsertUsageHourly(row *AIUsageHourly) error {
@@ -261,13 +284,36 @@ func (f UsageProjectionFilter) buildQuery(tx *gorm.DB) *gorm.DB {
 	return tx
 }
 
-// QueryUsageRows 按筛选条件返回投影明细（§12.7 统计 API 底层）。
+// QueryUsageRows 按筛选条件返回投影明细（§12.7 异常检测底层，整段范围内不翻页）。
 func QueryUsageRows(f UsageProjectionFilter) ([]*AIUsageHourly, error) {
 	var rows []*AIUsageHourly
 	tx := DB.Model(&AIUsageHourly{})
 	tx = f.buildQuery(tx)
 	err := tx.Order("bucket_time asc").Find(&rows).Error
 	return rows, err
+}
+
+// QueryUsageRowsPage 按筛选条件返回投影明细的一页（§12.7 统计 API，E.2 P1-E 服务端分页）。
+// 排序固定为 bucket_time DESC, id DESC，保证同小时内行序稳定。page<=0 归 1，pageSize<=0 归 20。
+func QueryUsageRowsPage(f UsageProjectionFilter, page, pageSize int) ([]*AIUsageHourly, int64, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	var rows []*AIUsageHourly
+	var total int64
+	base := DB.Model(&AIUsageHourly{})
+	base = f.buildQuery(base)
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := base.Order("bucket_time desc, id desc").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&rows).Error
+	return rows, total, err
 }
 
 // ParseUsageAttribution 从 ai_attribution 快照 map 解析投影维度。
