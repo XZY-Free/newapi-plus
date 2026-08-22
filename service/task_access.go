@@ -7,6 +7,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/types"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ---------------------------------------------------------------------------
@@ -141,6 +143,24 @@ func profileHasAppBinding(snap *types.IdentitySnapshot, appCode string) bool {
 		}
 	}
 	return false
+}
+
+// LoadIdentitySnapshotFromContext 从请求上下文取出 token_id 并加载其 IdentitySnapshot
+// （§10.6/§10.7）。归因治理未启用或无 token 时返回 nil（调用方按 Legacy/disabled 语义处理）。
+// 供 controller / relay / middleware 的数据面任务访问判定复用，避免各包重复实现同一加载逻辑。
+func LoadIdentitySnapshotFromContext(c *gin.Context) *types.IdentitySnapshot {
+	if GetAttributionMode() == constant.AttributionModeDisabled {
+		return nil
+	}
+	tokenID := c.GetInt("token_id")
+	if tokenID <= 0 {
+		return nil
+	}
+	snap, err := GetIdentitySnapshotByTokenID(tokenID)
+	if err != nil {
+		return nil
+	}
+	return snap
 }
 
 // CanAccessTask 判定当前凭证是否可访问某任务（§10.6/§10.7）。

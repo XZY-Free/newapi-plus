@@ -6,37 +6,39 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 // buildAttribution 构造一个 WorkBuddy 弱身份（STATIC/PRINCIPAL）归因上下文。
 func buildAttribution(mode, target string) *constant.TrustedAttributionContext {
 	return &constant.TrustedAttributionContext{
-		TokenID:          101,
-		ProfileID:        9,
-		IdentityMode:     mode,
-		AttributionTarget: target,
-		IdentityAssurance: constant.IdentityAssuranceCredentialOnly,
-		PrincipalID:       1,
-		PrincipalCode:     "zhangsan",
-		PrincipalName:     "张三",
-		CredentialPurposeID: 10,
+		TokenID:               101,
+		ProfileID:             9,
+		IdentityMode:          mode,
+		AttributionTarget:     target,
+		IdentityAssurance:     constant.IdentityAssuranceCredentialOnly,
+		PrincipalID:           1,
+		PrincipalCode:         "zhangsan",
+		PrincipalName:         "张三",
+		CredentialPurposeID:   10,
 		CredentialPurposeCode: "WORKBUDDY",
-		UsageTeamID:       55,
-		UsageTeamCode:     "teamA",
+		UsageTeamID:           55,
+		UsageTeamCode:         "teamA",
 	}
 }
 
 // buildPrincipalSnap 构造对应 Profile 的 IdentitySnapshot。
 func buildPrincipalSnap(principalID, purposeID int, enabled bool) *types.IdentitySnapshot {
 	return &types.IdentitySnapshot{
-		ProfileID:             9,
-		TokenID:               101,
-		Enabled:               enabled,
-		IdentityMode:          constant.IdentityModeStatic,
-		AttributionTarget:     constant.AttributionTargetPrincipal,
-		PrincipalID:           principalID,
-		PrincipalEnabled:      true,
-		CredentialPurposeID:   purposeID,
+		ProfileID:                9,
+		TokenID:                  101,
+		Enabled:                  enabled,
+		IdentityMode:             constant.IdentityModeStatic,
+		AttributionTarget:        constant.AttributionTargetPrincipal,
+		PrincipalID:              principalID,
+		PrincipalEnabled:         true,
+		CredentialPurposeID:      purposeID,
 		CredentialPurposeEnabled: true,
 	}
 }
@@ -152,7 +154,7 @@ func TestAccessDynamicDifferentCaller(t *testing.T) {
 		RootAppID:         "app-workbuddy",
 	}
 	snap := &types.IdentitySnapshot{
-		Enabled: true,
+		Enabled:  true,
 		CallerID: "caller-OTHER", // 同一 NewAPI user 下另一个 caller
 		Applications: []types.SnapshotApplication{
 			{AppCode: "app-workbuddy", AppEnabled: true, BindingEnabled: true},
@@ -173,7 +175,7 @@ func TestAccessHybridDifferentApp(t *testing.T) {
 		RootAppID:         "app-workbuddy",
 	}
 	snap := &types.IdentitySnapshot{
-		Enabled: true,
+		Enabled:  true,
 		CallerID: "caller-9",
 		Applications: []types.SnapshotApplication{
 			{AppCode: "app-IDE", AppEnabled: true, BindingEnabled: true},
@@ -222,6 +224,24 @@ func TestAccessDisabledModePassesThrough(t *testing.T) {
 	if allowed, _ := CanAccessTask(nil, task); !allowed {
 		t.Fatal("disabled 模式应恒放行")
 	}
+}
+
+// TestLoadIdentitySnapshotFromContextNilSemantics 冻结数据面统一快照加载器的 nil 语义
+// （Final Readiness P0）：归因治理未启用 → nil（行为与改造前一致，放行）；enforce 但
+// 无 token_id → nil（调用方按 Legacy/disabled 语义处理）。各数据面入口
+// （RelayTaskFetch/ResolveOriginTask/videoProxy 等）依赖此语义安全放行或拒绝。
+func TestLoadIdentitySnapshotFromContextNilSemantics(t *testing.T) {
+	c, _ := gin.CreateTestContext(nil)
+
+	// 归因治理未启用（AI_ATTRIBUTION_MODE=disabled）→ nil。
+	t.Setenv(constant.AttributionModeEnv, constant.AttributionModeDisabled)
+	c.Set("token_id", 101)
+	require.Nil(t, LoadIdentitySnapshotFromContext(c), "disabled 模式必须返回 nil（调用方按原行为放行）")
+
+	// enforce 模式但无 token_id → nil。
+	t.Setenv(constant.AttributionModeEnv, constant.AttributionModeEnforce)
+	c2, _ := gin.CreateTestContext(nil)
+	require.Nil(t, LoadIdentitySnapshotFromContext(c2), "无 token_id 必须返回 nil")
 }
 
 // FilterTasksByAttribution 只保留可访问任务，且不修改原切片。

@@ -25,38 +25,38 @@ const (
 	companyAttrEnvironment    = "company.ai.environment"
 
 	// 弱身份个人凭证
-	companyAttrPrincipalID       = "company.ai.principal.id"
-	companyAttrPrincipalCode     = "company.ai.principal.code"
-	companyAttrPrincipalName     = "company.ai.principal.name"
-	companyAttrCredentialPurposeID = "company.ai.credential.purpose.id"
-	companyAttrCredentialPurpose   = "company.ai.credential.purpose.code"
-	companyAttrCredentialPurposeName = "company.ai.credential.purpose.name"
-	companyAttrUsageBusinessDomainID = "company.ai.usage_business_domain.id"
-	companyAttrUsageBusinessDomain   = "company.ai.usage_business_domain.code"
+	companyAttrPrincipalID             = "company.ai.principal.id"
+	companyAttrPrincipalCode           = "company.ai.principal.code"
+	companyAttrPrincipalName           = "company.ai.principal.name"
+	companyAttrCredentialPurposeID     = "company.ai.credential.purpose.id"
+	companyAttrCredentialPurpose       = "company.ai.credential.purpose.code"
+	companyAttrCredentialPurposeName   = "company.ai.credential.purpose.name"
+	companyAttrUsageBusinessDomainID   = "company.ai.usage_business_domain.id"
+	companyAttrUsageBusinessDomain     = "company.ai.usage_business_domain.code"
 	companyAttrUsageBusinessDomainName = "company.ai.usage_business_domain.name"
-	companyAttrUsageTeamID         = "company.ai.usage_team.id"
-	companyAttrUsageTeam           = "company.ai.usage_team.code"
-	companyAttrUsageTeamName       = "company.ai.usage_team.name"
+	companyAttrUsageTeamID             = "company.ai.usage_team.id"
+	companyAttrUsageTeam               = "company.ai.usage_team.code"
+	companyAttrUsageTeamName           = "company.ai.usage_team.name"
 
 	// 强身份 Caller 与应用
-	companyAttrCallerID     = "company.ai.caller.id"
-	companyAttrRootAppID    = "company.ai.root_app.id"
-	companyAttrRootAppName  = "company.ai.root_app.name"
+	companyAttrCallerID              = "company.ai.caller.id"
+	companyAttrRootAppID             = "company.ai.root_app.id"
+	companyAttrRootAppName           = "company.ai.root_app.name"
 	companyAttrAppBusinessDomainID   = "company.ai.application_business_domain.id"
 	companyAttrAppBusinessDomain     = "company.ai.application_business_domain.code"
 	companyAttrAppBusinessDomainName = "company.ai.application_business_domain.name"
-	companyAttrOwnerTeamID   = "company.ai.owner_team.id"
-	companyAttrOwnerTeam     = "company.ai.owner_team.code"
-	companyAttrOwnerTeamName = "company.ai.owner_team.name"
-	companyAttrRootRunID     = "company.ai.root_run.id"
-	companyAttrCurrentExecID = "company.ai.current_execution.id"
-	companyAttrParentExecID  = "company.ai.parent_execution.id"
-	companyAttrExecType      = "company.ai.execution.type"
-	companyAttrExecDepth     = "company.ai.execution.depth"
-	companyAttrWorkflowID    = "company.ai.workflow.id"
-	companyAttrAgentID       = "company.ai.agent.id"
-	companyAttrTaskID        = "company.ai.task.id"
-	companyAttrNodeID        = "company.ai.node.id"
+	companyAttrOwnerTeamID           = "company.ai.owner_team.id"
+	companyAttrOwnerTeam             = "company.ai.owner_team.code"
+	companyAttrOwnerTeamName         = "company.ai.owner_team.name"
+	companyAttrRootRunID             = "company.ai.root_run.id"
+	companyAttrCurrentExecID         = "company.ai.current_execution.id"
+	companyAttrParentExecID          = "company.ai.parent_execution.id"
+	companyAttrExecType              = "company.ai.execution.type"
+	companyAttrExecDepth             = "company.ai.execution.depth"
+	companyAttrWorkflowID            = "company.ai.workflow.id"
+	companyAttrAgentID               = "company.ai.agent.id"
+	companyAttrTaskID                = "company.ai.task.id"
+	companyAttrNodeID                = "company.ai.node.id"
 
 	// Identity 自身 Metric（§9.19）
 	metricIdentityVerification = "company.ai.identity.verification"
@@ -153,10 +153,18 @@ func EnterpriseAttributes(a *constant.TrustedAttributionContext) []attribute.Key
 	return attrs
 }
 
-// recordIdentityMetricsIfAny 记录 company.ai.identity.verification 计数器（§9.19）。
-// 高基数维度（principal_id/name、root_run、nonce、request_id、trace_id）不得作为标签。
-func recordIdentityMetricsIfAny(a *constant.TrustedAttributionContext, err error) {
-	if !IsEnabled() || a == nil {
+// RecordIdentityVerification 记录 company.ai.identity.verification 计数器（§9.19）。
+// 在 AIIdentityAuth 的治理决策点调用，每个请求恰好一次（Final Readiness P1）：
+//   - VERIFIED   身份建立，继续
+//   - UNVERIFIED 身份未建立或强身份验证失败，但 audit 模式允许继续（audit 失败+继续
+//     一律 UNVERIFIED，绝不 REJECTED）
+//   - REJECTED   ENFORCE 真正拦截（含签名无效、模式非法等被阻断的请求）
+//
+// 高基数维度（principal_id/name、root_run、nonce、request_id、trace_id）不得作为标签；
+// caller/purpose/domain 等归属标签因 REJECTED 分支无归因上下文，为保持一致标签结构，
+// 统一只携带 identity_mode / identity_assurance / reason_code / result。
+func RecordIdentityVerification(identityMode, identityAssurance, reasonCode, result string) {
+	if !IsEnabled() {
 		return
 	}
 	initIdentityMetrics()
@@ -165,34 +173,13 @@ func recordIdentityMetricsIfAny(a *constant.TrustedAttributionContext, err error
 	}
 	ctx := context.Background()
 	labels := []attribute.KeyValue{
-		attribute.String("identity_mode", a.IdentityMode),
+		attribute.String(metricIdentityMode, identityMode),
 	}
-	if a.IdentityAssurance != "" {
-		labels = append(labels, attribute.String(metricAssurance, a.IdentityAssurance))
+	if identityAssurance != "" {
+		labels = append(labels, attribute.String(metricAssurance, identityAssurance))
 	}
-	if a.CallerID != "" && a.AttributionTarget == constant.AttributionTargetPlatform && a.IdentityVerified {
-		labels = append(labels, attribute.String(companyAttrCallerID, a.CallerID))
-	}
-	if a.CredentialPurposeCode != "" {
-		labels = append(labels, attribute.String(companyAttrCredentialPurpose, a.CredentialPurposeCode))
-	}
-	if a.UsageBusinessDomainCode != "" {
-		labels = append(labels, attribute.String(companyAttrUsageBusinessDomain, a.UsageBusinessDomainCode))
-	}
-	if a.UsageTeamCode != "" {
-		labels = append(labels, attribute.String(companyAttrUsageTeam, a.UsageTeamCode))
-	}
-	if a.FailureReason != "" {
-		labels = append(labels, attribute.String("reason_code", a.FailureReason))
-	}
-
-	result := "verified"
-	if !a.IdentityVerified {
-		if a.FailureReason != "" {
-			result = "rejected"
-		} else {
-			result = "unverified"
-		}
+	if reasonCode != "" {
+		labels = append(labels, attribute.String("reason_code", reasonCode))
 	}
 	labels = append(labels, attribute.String("result", result))
 	identityVerificationCounter.Add(ctx, 1, metric.WithAttributes(labels...))

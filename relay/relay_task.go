@@ -64,6 +64,13 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 		return service.TaskErrorWrapperLocal(errors.New("task_origin_not_exist"), "task_not_exist", http.StatusBadRequest)
 	}
 
+	// 数据面访问边界（§10.6/§10.7）：remix/续作必须先经归因授权，且发生在任何 Provider
+	// 调用前（红线）。未授权返回 task_not_exist，避免向未授权凭证泄露原始任务存在性。
+	// 复用统一 CanAccessTask；归因治理未启用时原样放行。
+	if allowed, _ := service.CanAccessTask(service.LoadIdentitySnapshotFromContext(c), originTask); !allowed {
+		return service.TaskErrorWrapperLocal(errors.New("task_origin_not_exist"), "task_not_exist", http.StatusBadRequest)
+	}
+
 	// 从原始任务推导模型名称
 	if info.OriginModelName == "" {
 		if originTask.Properties.OriginModelName != "" {
@@ -334,6 +341,8 @@ func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.Ta
 			taskResp = service.TaskErrorWrapper(err, "get_tasks_failed", http.StatusInternalServerError)
 			return
 		}
+		// 数据面访问边界（§10.6/§10.7）：批量查询按归因过滤，仅返回当前凭证可访问的任务。
+		taskModels = service.FilterTasksByAttribution(service.LoadIdentitySnapshotFromContext(c), taskModels)
 		for _, task := range taskModels {
 			tasks = append(tasks, TaskModel2Dto(task))
 		}
@@ -361,6 +370,12 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 		return
 	}
 
+	// 数据面访问边界（§10.6/§10.7）：未授权返回 task_not_exist，避免存在性泄露。
+	if allowed, _ := service.CanAccessTask(service.LoadIdentitySnapshotFromContext(c), originTask); !allowed {
+		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
+		return
+	}
+
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
 		Data: TaskModel2Dto(originTask),
@@ -381,6 +396,13 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 	if !exist {
+		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
+		return
+	}
+
+	// 数据面访问边界（§10.6/§10.7）：未授权返回 task_not_exist，且在实时上游查询/
+	// 转换（tryRealtimeFetch/ConvertToOpenAIVideo，即任何 Provider 调用）之前拦截。
+	if allowed, _ := service.CanAccessTask(service.LoadIdentitySnapshotFromContext(c), originTask); !allowed {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
 		return
 	}

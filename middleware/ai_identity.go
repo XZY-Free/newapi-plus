@@ -18,6 +18,8 @@ import (
 // OTel 未启用或 Span 未采样时 SetAttributes 为空操作，不改变认证语义。
 func attachIdentityAttribution(c *gin.Context, ctx *constant.TrustedAttributionContext) {
 	common.SetTrustedAttribution(c, ctx)
+	// 继续路径：在此登记 VERIFIED / UNVERIFIED 处置（Final Readiness P1）。
+	recordAttributionDecision(c, ctx)
 	if ctx == nil {
 		return
 	}
@@ -58,6 +60,97 @@ func deleteIdentityHeaders(c *gin.Context) {
 	}
 }
 
+// identityDecision 是 AIIdentityAuth 在治理决策点得出的最终身份验证处置（三态：
+// VERIFIED / UNVERIFIED / REJECTED），携带 identity_mode / identity_assurance /
+// reason_code 供指标标签。存于 ContextKeyIdentityDecision，由 defer 读取发出指标。
+type identityDecision struct {
+	result     string
+	mode       string
+	assurance  string
+	reasonCode string
+}
+
+func setIdentityDecision(c *gin.Context, d *identityDecision) {
+	c.Set(string(constant.ContextKeyIdentityDecision), d)
+}
+
+// markIdentityVerified 在身份建立（继续）时登记 VERIFIED。
+func markIdentityVerified(c *gin.Context, ctx *constant.TrustedAttributionContext) {
+	if ctx == nil {
+		return
+	}
+	setIdentityDecision(c, &identityDecision{
+		result:    constant.IdentityAuditResultVerified,
+		mode:      ctx.IdentityMode,
+		assurance: ctx.IdentityAssurance,
+	})
+}
+
+// markIdentityUnverified 在 audit 降级放行（继续）时登记 UNVERIFIED，携带降级原因。
+// audit 失败+继续必须是 UNVERIFIED，绝不 REJECTED。
+func markIdentityUnverified(c *gin.Context, ctx *constant.TrustedAttributionContext) {
+	if ctx == nil {
+		return
+	}
+	setIdentityDecision(c, &identityDecision{
+		result:     constant.IdentityAuditResultUnverified,
+		mode:       ctx.IdentityMode,
+		assurance:  ctx.IdentityAssurance,
+		reasonCode: ctx.FailureReason,
+	})
+}
+
+// markIdentityRejected 在 ENFORCE 真正拦截（或非法模式 503）时登记 REJECTED，
+// reason_code 保留（SIGNATURE_INVALID / APP_NOT_BOUND / PROFILE_DISABLED /
+// REPLAY_DETECTED / ATTRIBUTION_MODE_INVALID 等）。
+func markIdentityRejected(c *gin.Context, mode, assurance, reasonCode string) {
+	setIdentityDecision(c, &identityDecision{
+		result:     constant.IdentityAuditResultRejected,
+		mode:       mode,
+		assurance:  assurance,
+		reasonCode: reasonCode,
+	})
+}
+
+// verificationResultForContext 依据归因上下文得出继续路径的三态处置
+// （Final Readiness P1 语义）：IdentityVerified=true → VERIFIED；否则 → UNVERIFIED。
+// 注意：audit 失败+继续必须一律 UNVERIFIED，绝不因 FailureReason 存在而误判 REJECTED。
+// nil 上下文（未做治理判定）返回空串。
+func verificationResultForContext(ctx *constant.TrustedAttributionContext) string {
+	if ctx == nil {
+		return ""
+	}
+	if ctx.IdentityVerified {
+		return constant.IdentityAuditResultVerified
+	}
+	return constant.IdentityAuditResultUnverified
+}
+
+// recordAttributionDecision 在继续路径（attachIdentityAttribution 已附着归因）登记
+// 三态处置：IdentityVerified=true → VERIFIED；否则（audit 降级）→ UNVERIFIED。
+func recordAttributionDecision(c *gin.Context, ctx *constant.TrustedAttributionContext) {
+	switch verificationResultForContext(ctx) {
+	case constant.IdentityAuditResultVerified:
+		markIdentityVerified(c, ctx)
+	case constant.IdentityAuditResultUnverified:
+		markIdentityUnverified(c, ctx)
+	}
+}
+
+// recordIdentityVerificationDecision 在 defer 中读取处置并发出恰一次指标。
+// 未登记处置（disabled 模式 / 非消费查询 / 未做治理判定）时不计数。
+func recordIdentityVerificationDecision(c *gin.Context) {
+	v, ok := c.Get(string(constant.ContextKeyIdentityDecision))
+	if !ok {
+		return
+	}
+	d, ok := v.(*identityDecision)
+	if !ok || d == nil {
+		return
+	}
+	tracing.RecordIdentityVerification(d.mode, d.assurance, d.reasonCode, d.result)
+}
+
 // AIIdentityAuth 运行时身份认证中间件（文档 7）。顺序 TokenAuth → AIIdentityAuth →
 // AICredentialRateLimit → 原 ModelRequestRateLimit → Distribute。
 //
@@ -68,6 +161,10 @@ func deleteIdentityHeaders(c *gin.Context) {
 // ATTRIBUTION_MODE_INVALID，非消费查询清头继续（7.8 / 7.20）。
 func AIIdentityAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		// Final Readiness P1：在治理决策点登记最终身份验证处置，每个请求恰一次。
+		// defer 在函数返回（含 abort/c.Next() 完成后）时读取处置并发出指标。
+		defer recordIdentityVerificationDecision(c)
+
 		hdr := extractIdentityHeaders(c)
 		deleteIdentityHeaders(c)
 
@@ -83,6 +180,7 @@ func AIIdentityAuth() func(c *gin.Context) {
 					RequestPath: c.Request.URL.Path,
 					ClientIp:    c.ClientIP(),
 				})
+				markIdentityRejected(c, mode, "", constant.ReasonCodeAttributionModeInvalid)
 				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "身份归因模式配置非法", relaytypes.ErrorCode(constant.AIIdentityAttributionModeInvalid))
 				return
 			}
@@ -112,6 +210,7 @@ func AIIdentityAuth() func(c *gin.Context) {
 				ClientIp:    c.ClientIP(),
 			})
 			if mode == constant.AttributionModeEnforce {
+				markIdentityRejected(c, "", "", constant.ReasonCodeProfileRequired)
 				abortWithOpenAiMessage(c, http.StatusUnauthorized, "缺少有效的 API Key", relaytypes.ErrorCode(constant.AIIdentityProfileRequired))
 				return
 			}
@@ -133,6 +232,7 @@ func AIIdentityAuth() func(c *gin.Context) {
 				ClientIp:    c.ClientIP(),
 			})
 			if mode == constant.AttributionModeEnforce {
+				markIdentityRejected(c, "", "", constant.ReasonCodeStoreUnavailable)
 				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "身份快照不可用", relaytypes.ErrorCode(constant.AIIdentityProfileRequired))
 				return
 			}
@@ -208,6 +308,7 @@ func handleProfileMissing(c *gin.Context, mode string, tokenID int) {
 		ClientIp:    c.ClientIP(),
 	})
 	if mode == constant.AttributionModeEnforce {
+		markIdentityRejected(c, "", "", constant.ReasonCodeProfileRequired)
 		abortWithOpenAiMessage(c, http.StatusForbidden, "Token 未登记企业身份 Profile", relaytypes.ErrorCode(constant.AIIdentityProfileRequired))
 		return
 	}
@@ -227,6 +328,7 @@ func handleProfileDisabled(c *gin.Context, mode string, snapshot *newtypes.Ident
 		ClientIp:    c.ClientIP(),
 	})
 	if mode == constant.AttributionModeEnforce {
+		markIdentityRejected(c, snapshot.IdentityMode, snapshot.IdentityAssurance, constant.ReasonCodeProfileDisabled)
 		abortWithOpenAiMessage(c, http.StatusForbidden, "Identity Profile 已停用", relaytypes.ErrorCode(constant.AIIdentityProfileDisabled))
 		return
 	}
@@ -246,6 +348,7 @@ func handleIdentityModeInvalid(c *gin.Context, mode string, snapshot *newtypes.I
 		ClientIp:    c.ClientIP(),
 	})
 	if mode == constant.AttributionModeEnforce {
+		markIdentityRejected(c, snapshot.IdentityMode, snapshot.IdentityAssurance, constant.ReasonCodeIdentityModeInvalid)
 		abortWithOpenAiMessage(c, http.StatusForbidden, "Identity Profile 身份模式非法", relaytypes.ErrorCode(constant.AIIdentityProfileDisabled))
 		return
 	}
@@ -301,6 +404,7 @@ func handleSnapshotInvalid(c *gin.Context, mode string, snapshot *newtypes.Ident
 		ClientIp:    c.ClientIP(),
 	})
 	if mode == constant.AttributionModeEnforce {
+		markIdentityRejected(c, snapshot.IdentityMode, snapshot.IdentityAssurance, failure.reason)
 		abortWithOpenAiMessage(c, http.StatusForbidden, failure.message, relaytypes.ErrorCode(failure.code))
 		return
 	}
@@ -346,6 +450,7 @@ func handleStaticAttribution(c *gin.Context, mode string, snapshot *newtypes.Ide
 			ClientIp:            c.ClientIP(),
 		})
 		if mode == constant.AttributionModeEnforce {
+			markIdentityRejected(c, snapshot.IdentityMode, snapshot.IdentityAssurance, failure.reason)
 			abortWithOpenAiMessage(c, http.StatusForbidden, failure.message, relaytypes.ErrorCode(failure.code))
 			return
 		}
@@ -466,6 +571,7 @@ func handleSignedAttribution(c *gin.Context, mode string, hdr identityHeaders, s
 				RequestPath:         c.Request.URL.Path,
 				ClientIp:            c.ClientIP(),
 			})
+			markIdentityRejected(c, snapshot.IdentityMode, snapshot.IdentityAssurance, failure.reason)
 			abortWithOpenAiMessage(c, failure.status, failure.message, relaytypes.ErrorCode(failure.code))
 			return
 		}
@@ -590,6 +696,7 @@ func handleIdentityRedisDown(c *gin.Context, mode string, snapshot *newtypes.Ide
 		ClientIp:          c.ClientIP(),
 	})
 	if mode == constant.AttributionModeEnforce {
+		markIdentityRejected(c, snapshot.IdentityMode, snapshot.IdentityAssurance, constant.ReasonCodeReplayStoreUnavailable)
 		abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "重放防护存储不可用", relaytypes.ErrorCode(constant.AIReplayStoreUnavailable))
 		return
 	}

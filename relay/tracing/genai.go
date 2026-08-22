@@ -27,8 +27,8 @@ const (
 	attrErrorType          = "error.type"
 
 	// 企业属性（§9.13 通用）
-	attrCompanyQuota    = "company.ai.cost.quota"
-	attrCompanyRequest  = "company.ai.gateway.request_id"
+	attrCompanyQuota   = "company.ai.cost.quota"
+	attrCompanyRequest = "company.ai.gateway.request_id"
 
 	// GenAI 指标
 	metricTokenUsage  = "gen_ai.client.token.usage"
@@ -36,10 +36,10 @@ const (
 	metricTimeToFirst = "gen_ai.client.operation.time_to_first_chunk"
 
 	// 指标标签维度
-	metricTokenType      = "token_type"
-	metricStatus         = "status"
-	metricIdentityMode   = "identity_mode"
-	metricAssurance      = "identity_assurance"
+	metricTokenType    = "token_type"
+	metricStatus       = "status"
+	metricIdentityMode = "identity_mode"
+	metricAssurance    = "identity_assurance"
 )
 
 // GenAISpan 表达一次逻辑模型操作（V1.1 §9.7），覆盖 NewAPI 的 Channel Retry 生命周期。
@@ -156,7 +156,10 @@ func (s *GenAISpan) End(usage *dto.BillingUsage, quota int64, ttfc time.Duration
 	}
 
 	recordMetrics(s.start, usage, quota, ttfc, hasTTFC, err, attribution)
-	recordIdentityMetricsIfAny(attribution, err)
+	// 身份验证指标（company.ai.identity.verification）不再在此记录：ENFORCE 被阻断的
+	// 请求根本不生成 GenAI span（不进入 relay），在 End 记录会导致被阻断请求丢失指标，
+	// 且与 AIIdentityAuth 治理决策点的记录重复。改由 AIIdentityAuth 的 defer 恰一次发出
+	//（Final Readiness P1）。
 }
 
 func (s *GenAISpan) recordTokenAttributes(usage *dto.BillingUsage) {
@@ -176,7 +179,7 @@ func (s *GenAISpan) recordTokenAttributes(usage *dto.BillingUsage) {
 }
 
 // NormalizedTokenCounts 从 NewAPI 归一化 BillingUsage 提取 input/output/cacheRead token 总量
-//（V1.1 §9.11）。按 Semantic 选择语义；cached token 是 input 的子集，不再次叠加到 input。
+// （V1.1 §9.11）。按 Semantic 选择语义；cached token 是 input 的子集，不再次叠加到 input。
 func NormalizedTokenCounts(usage *dto.BillingUsage) (input, output, cacheRead int64) {
 	if usage == nil {
 		return 0, 0, 0

@@ -50,8 +50,8 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	// 单 NewAPI User 下的任务访问边界（§10.6/§10.7）。被拒绝时返回 404，
-	// 避免向未授权凭证泄露任务存在性。
-	if allowed, _ := service.CanAccessTask(loadIdentitySnapshot(c), task); !allowed {
+	// 避免向未授权凭证泄露任务存在性。统一快照加载见 service.LoadIdentitySnapshotFromContext。
+	if allowed, _ := service.CanAccessTask(service.LoadIdentitySnapshotFromContext(c), task); !allowed {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}

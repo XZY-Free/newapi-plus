@@ -79,6 +79,13 @@ const (
 	// middleware (Batch 2) writes it.
 	ContextKeyTrustedAttribution ContextKey = "trusted_attribution"
 
+	// ContextKeyIdentityDecision stores the final identity verification disposition
+	// (VERIFIED / UNVERIFIED / REJECTED) computed by AIIdentityAuth at the governance
+	// decision point, plus its identity_mode / identity_assurance / reason_code.
+	// Exactly one record per request; read by the tracing defer to emit
+	// company.ai.identity.verification exactly once (Final Readiness P1).
+	ContextKeyIdentityDecision ContextKey = "identity_decision"
+
 	// ContextKeyAIOriginalMethod / ContextKeyAIOriginalPath 记录视频类 converter
 	// 在改写 URL 之前的“外部入站 method/path”，供 AIIdentityAuth 构造 canonical
 	// 签名原文（文档 7.4）时使用，避免 converter 改写破坏签名验证。

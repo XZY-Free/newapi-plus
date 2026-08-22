@@ -433,7 +433,11 @@ func getTaskOriginModelName(c *gin.Context) string {
 
 	userId := c.GetInt("id")
 	if task, exist, err := model.GetByTaskId(userId, taskId); err == nil && exist && task != nil {
-		return task.Properties.OriginModelName
+		// 数据面访问边界（§10.6/§10.7）：未授权不泄露模型名，按无回填处理（下游
+		// model-limit 校验将以“无模型”拒绝，属安全 fail-closed），而非仅凭 user_id 放行。
+		if allowed, _ := service.CanAccessTask(service.LoadIdentitySnapshotFromContext(c), task); allowed {
+			return task.Properties.OriginModelName
+		}
 	}
 	return ""
 }

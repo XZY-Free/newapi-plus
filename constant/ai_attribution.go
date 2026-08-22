@@ -149,8 +149,11 @@ const (
 	DefaultGovernanceEnvironment = "prod"
 )
 
-// 身份审计结果。
+// 身份审计结果。三态（Final Readiness P1）：VERIFIED=身份建立并继续；
+// UNVERIFIED=身份未建立或强身份验证失败但 audit 模式允许继续（audit 失败+继续必须
+// 是 UNVERIFIED，绝不 REJECTED）；REJECTED=ENFORCE 真正拦截（含模式非法）。
 const (
+	IdentityAuditResultVerified   = "VERIFIED"
 	IdentityAuditResultUnverified = "UNVERIFIED"
 	IdentityAuditResultRejected   = "REJECTED"
 )
