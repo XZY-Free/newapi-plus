@@ -23,6 +23,7 @@ import type { GovernanceIdentityProfile } from '../../types'
 import {
   buildIdentityProfileCreatePayload,
   buildIdentityProfileEditDelta,
+  buildIdentityProfileReconfigurePlan,
   findIdentityProfileModeConfig,
   getIdentityProfileFormSchema,
   isLegalIdentityCombo,
@@ -282,6 +283,81 @@ describe('buildIdentityProfileEditDelta', () => {
       CONFIG.STATIC_PRINCIPAL
     )
     expect(delta).toEqual({})
+  })
+})
+
+describe('buildIdentityProfileReconfigurePlan', () => {
+  test('STATIC/PRINCIPAL: app_ids=[], caller explicitly cleared, principal/purpose kept, no enabled', () => {
+    const plan = buildIdentityProfileReconfigurePlan(
+      formFor(CONFIG.STATIC_PRINCIPAL, {
+        principal_id: 5,
+        credential_purpose_id: 4,
+        caller_id: 'stale-caller',
+        caller_name: 'stale',
+        app_ids: [1, 2],
+      }),
+      CONFIG.STATIC_PRINCIPAL
+    )
+    expect(plan.app_ids).toEqual([])
+    expect(plan.profilePatch).toEqual({
+      identity_mode: 'STATIC',
+      attribution_target_type: 'PRINCIPAL',
+      identity_assurance: 'CREDENTIAL_ONLY',
+      caller_id: '',
+      caller_name: '',
+      principal_id: 5,
+      credential_purpose_id: 4,
+    })
+    expect('enabled' in plan.profilePatch).toBe(false)
+  })
+
+  test('STATIC/APPLICATION: app_ids exactly one, principal/purpose/caller cleared', () => {
+    const plan = buildIdentityProfileReconfigurePlan(
+      formFor(CONFIG.STATIC_APPLICATION, {
+        principal_id: 5,
+        credential_purpose_id: 4,
+        caller_id: 'stale',
+        app_ids: [3],
+      }),
+      CONFIG.STATIC_APPLICATION
+    )
+    expect(plan.app_ids).toEqual([3])
+    expect(plan.profilePatch.principal_id).toBe(0)
+    expect(plan.profilePatch.credential_purpose_id).toBe(0)
+    expect(plan.profilePatch.caller_id).toBe('')
+    expect(plan.profilePatch.caller_name).toBe('')
+  })
+
+  test('DYNAMIC/PLATFORM: caller kept+trimmed, apps >=1, principal/purpose cleared', () => {
+    const plan = buildIdentityProfileReconfigurePlan(
+      formFor(CONFIG.DYNAMIC_PLATFORM, {
+        caller_id: '  platform-a ',
+        caller_name: ' Platform A ',
+        principal_id: 5,
+        credential_purpose_id: 4,
+        app_ids: [1, 2],
+      }),
+      CONFIG.DYNAMIC_PLATFORM
+    )
+    expect(plan.app_ids).toEqual([1, 2])
+    expect(plan.profilePatch.caller_id).toBe('platform-a')
+    expect(plan.profilePatch.caller_name).toBe('Platform A')
+    expect(plan.profilePatch.principal_id).toBe(0)
+    expect(plan.profilePatch.credential_purpose_id).toBe(0)
+  })
+
+  test('HYBRID/APPLICATION: caller kept, app_ids exactly one, principal/purpose cleared', () => {
+    const plan = buildIdentityProfileReconfigurePlan(
+      formFor(CONFIG.HYBRID_APPLICATION, {
+        caller_id: 'bot',
+        app_ids: [9],
+      }),
+      CONFIG.HYBRID_APPLICATION
+    )
+    expect(plan.app_ids).toEqual([9])
+    expect(plan.profilePatch.caller_id).toBe('bot')
+    expect(plan.profilePatch.principal_id).toBe(0)
+    expect(plan.profilePatch.credential_purpose_id).toBe(0)
   })
 })
 

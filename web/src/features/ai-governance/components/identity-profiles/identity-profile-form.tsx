@@ -358,6 +358,11 @@ export function IdentityProfileForm({
                               ? currentDetail?.principal?.principal_name
                               : undefined
                           }
+                          defaultDescription={
+                            isEdit
+                              ? currentDetail?.principal?.principal_code
+                              : undefined
+                          }
                         />
                       </FormControl>
                       <FormDescription>
@@ -380,6 +385,11 @@ export function IdentityProfileForm({
                           defaultLabel={
                             isEdit
                               ? currentDetail?.purpose?.credential_purpose_name
+                              : undefined
+                          }
+                          defaultDescription={
+                            isEdit
+                              ? currentDetail?.purpose?.credential_purpose_code
                               : undefined
                           }
                         />

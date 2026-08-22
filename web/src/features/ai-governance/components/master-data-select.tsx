@@ -61,6 +61,7 @@ export function MasterDataSelect<T>({
   itemToLabel,
   itemToDescription,
   defaultLabel,
+  defaultDescription,
   placeholder,
   emptyText,
   loadingText,
@@ -77,6 +78,7 @@ export function MasterDataSelect<T>({
   /** 可选次要描述行，渲染在候选标签下方（如 Token ID），用于消歧同名校标。 */
   itemToDescription?: (item: T) => ReactNode
   defaultLabel?: string
+  defaultDescription?: string
   placeholder: string
   emptyText: string
   loadingText?: string
@@ -90,6 +92,11 @@ export function MasterDataSelect<T>({
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [selectedLabel, setSelectedLabel] = useState<string | null>(
     defaultLabel ?? null
+  )
+  // 选中/编辑回显的稳定身份次要行（§11-C P1）：候选、选中、编辑回显三态都必须
+  // 能辨识稳定身份（name + code/id），不能选完就退化成只有 name。
+  const [selectedDescription, setSelectedDescription] = useState<ReactNode | null>(
+    defaultDescription ?? null
   )
 
   useEffect(() => {
@@ -115,6 +122,7 @@ export function MasterDataSelect<T>({
   useEffect(() => {
     if (value === null) {
       setSelectedLabel(null)
+      setSelectedDescription(null)
     }
   }, [value])
 
@@ -124,15 +132,22 @@ export function MasterDataSelect<T>({
     }
   }, [defaultLabel])
 
+  useEffect(() => {
+    if (defaultDescription != null) {
+      setSelectedDescription(defaultDescription)
+    }
+  }, [defaultDescription])
+
   const handleSelect = (item: T) => {
     setSelectedLabel(itemToLabel(item))
+    setSelectedDescription(itemToDescription ? itemToDescription(item) : null)
     onChange(itemToValue(item))
     setOpen(false)
     setQuery('')
     setDebouncedQuery('')
   }
 
-  const display =
+  const selectedLabelValue =
     selectedLabel ?? (value != null ? String(value) : placeholder)
 
   // 空态四态区分：候选请求失败必须显示 Error（Failed to load options + Retry），
@@ -170,7 +185,7 @@ export function MasterDataSelect<T>({
             variant='outline'
             role='combobox'
             aria-expanded={open}
-            aria-label={display}
+            aria-label={selectedLabelValue}
             disabled={disabled}
             className={cn(
               'border-input text-muted-foreground hover:bg-muted/55 hover:text-foreground w-full justify-between rounded-lg px-3 py-2 font-normal',
@@ -181,7 +196,14 @@ export function MasterDataSelect<T>({
           />
         }
       >
-        <span className='truncate'>{display}</span>
+        <span className='flex min-w-0 flex-col'>
+          <span className='truncate'>{selectedLabelValue}</span>
+          {selectedDescription != null && (
+            <span className='text-muted-foreground truncate text-xs'>
+              {selectedDescription}
+            </span>
+          )}
+        </span>
         <ChevronsUpDown className='size-4 shrink-0 opacity-50' />
       </PopoverTrigger>
       <PopoverContent

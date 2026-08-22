@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Circle, CircleOff, Pencil, Plus } from 'lucide-react'
+import { Circle, CircleOff, Eye, Pencil, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -35,7 +35,7 @@ import { useMediaQuery } from '@/hooks'
 import { formatTimestamp } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { listIdentityProfiles, updateIdentityProfile } from '../../api'
+import { listIdentityProfiles, listSigningKeys, updateIdentityProfile } from '../../api'
 import { parseEnabledFilter } from '../../lib/enabled-filter'
 import { useGovernanceTableState } from '../../lib/governance-table-state'
 import type {
@@ -45,6 +45,7 @@ import type {
 } from '../../types'
 import { EnabledBadge } from '../enabled-badge'
 import { TokenSelect } from '../token-select'
+import { IdentityProfileDetailSheet } from './identity-profile-detail'
 import { IdentityProfileForm } from './identity-profile-form'
 
 function modeVariant(mode: IdentityMode): 'neutral' | 'info' | 'warning' {
@@ -99,6 +100,13 @@ export function IdentityProfilesPage() {
     setEditRow(detail)
     setFormOpen('edit')
   }
+
+  // 详情抽屉（C.3）：View Details 行操作。
+  const [detailProfileId, setDetailProfileId] = useState<number | null>(null)
+  const openDetail = (detail: GovernanceIdentityProfileDetail) => {
+    setDetailProfileId(detail.profile.id)
+  }
+
   const handleFormSuccess = () => {
     setFormOpen(null)
     // 创建成功后失效对应 token 的重复探测缓存，并刷新列表。
@@ -115,6 +123,27 @@ export function IdentityProfilesPage() {
       pageSize: tableState.pagination.pageSize,
     })
   }
+
+  // C.4 L：启用 DYNAMIC/HYBRID Profile 时，若当前无 ACTIVE Signing Key，提示先
+  // 生成签名密钥。仅作引导，后端仍是最终门禁。
+  const enablingDynamicHybrid =
+    toggleRow != null &&
+    !toggleRow.profile.enabled &&
+    (toggleRow.profile.identity_mode === 'DYNAMIC' ||
+      toggleRow.profile.identity_mode === 'HYBRID')
+  const enableKeyCheck = useQuery({
+    queryKey: [
+      'ai-governance',
+      'identity-profile',
+      toggleRow?.profile.id,
+      'signing-keys',
+    ],
+    queryFn: () => listSigningKeys((toggleRow as GovernanceIdentityProfileDetail).profile.id),
+    enabled: enablingDynamicHybrid,
+  })
+  const enableNeedsKey =
+    enablingDynamicHybrid &&
+    (enableKeyCheck.data ?? []).every((k) => k.status !== 'ACTIVE')
 
   const columns: ColumnDef<GovernanceIdentityProfileDetail>[] = [
     {
@@ -251,6 +280,15 @@ export function IdentityProfilesPage() {
               type='button'
               variant='ghost'
               size='icon'
+              onClick={() => openDetail(detail)}
+              aria-label={t('View Details')}
+            >
+              <Eye className='size-4' />
+            </Button>
+            <Button
+              type='button'
+              variant='ghost'
+              size='icon'
               onClick={() => openEdit(detail)}
               aria-label={t('Edit')}
             >
@@ -273,7 +311,7 @@ export function IdentityProfilesPage() {
         )
       },
       meta: { pinned: 'right' as const },
-      size: 60,
+      size: 120,
     },
   ]
 
@@ -423,9 +461,18 @@ export function IdentityProfilesPage() {
             : 'Enable this identity profile?'
         )}
         desc={
-          toggleRow?.profile.enabled
-            ? t('This profile will no longer be used for identity attribution. Existing references are preserved.')
-            : t('This profile will be used for identity attribution.')
+          toggleRow?.profile.enabled ? (
+            t('This profile will no longer be used for identity attribution. Existing references are preserved.')
+          ) : (
+            <span className='flex flex-col gap-2'>
+              <span>{t('This profile will be used for identity attribution.')}</span>
+              {enableNeedsKey && (
+                <span>
+                  {t('DYNAMIC and HYBRID profiles require an ACTIVE signing key. If none is active, generate one in the Signing Keys tab before enabling. The backend is the final gate.')}
+                </span>
+              )}
+            </span>
+          )
         }
         confirmText={t(
           toggleRow?.profile.enabled ? 'Disable' : 'Enable'
@@ -450,6 +497,15 @@ export function IdentityProfilesPage() {
           />
         )}
       </Sheet>
+
+      <IdentityProfileDetailSheet
+        profileId={detailProfileId}
+        open={detailProfileId != null}
+        onOpenChange={(v) => {
+          if (!v) setDetailProfileId(null)
+        }}
+        onChanged={triggerRefresh}
+      />
     </>
   )
 }

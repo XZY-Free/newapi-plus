@@ -193,6 +193,21 @@ export function identityProfileFormDefaults(): IdentityProfileFormValues {
   }
 }
 
+/**
+ * 由聚合详情派生「重配置身份模式」默认值（§11-C §C.3 E）。
+ *
+ * 重配置从当前模式起步（字段沿用），但允许切换核心三元组；`app_ids` 预填当前
+ * 已绑定应用，供管理员在绑定优先的流程中先调整 App Binding 再写 Profile。
+ */
+export function identityProfileReconfigureDefaults(
+  detail: { profile: GovernanceIdentityProfile; bindings: { app_id: number }[] }
+): IdentityProfileFormValues {
+  return {
+    ...identityProfileEditDefaults(detail.profile),
+    app_ids: detail.bindings.map((b) => b.app_id),
+  }
+}
+
 /** 由既有 Profile 行派生 Edit 表单默认值（核心三元组与 token_id 只读沿用）。 */
 export function identityProfileEditDefaults(
   profile: GovernanceIdentityProfile
@@ -496,4 +511,35 @@ export function buildIdentityProfileEditDelta(
   }
 
   return delta
+}
+
+/**
+ * 重配置身份模式（§11-C §C.3 E）的分步计划：目标 App Binding 集合 + 目标 Profile Patch。
+ *
+ * 与普通 Edit 的 Delta 不同，重配置会切换核心三元组，因此必须**显式地设置/清理**
+ * 每个模式的隐藏字段（STATIC 清 Caller；APPLICATION/PLATFORM 清 Principal/Purpose），
+ * 绝不允许残留旧模式的隐藏字段。
+ *
+ * 执行顺序固定为「先 Replace App Bindings，再 Update Profile」，由页面层编排；
+ * 本函数只负责生成两段规范化后的请求体，绝不直接调用后端。
+ */
+export function buildIdentityProfileReconfigurePlan(
+  values: IdentityProfileFormValues,
+  config: IdentityProfileModeConfig
+): { app_ids: number[]; profilePatch: UpdateIdentityProfilePayload } {
+  const profilePatch: UpdateIdentityProfilePayload = {
+    identity_mode: values.identity_mode,
+    attribution_target_type: values.attribution_target_type,
+    identity_assurance: values.identity_assurance,
+    caller_id: config.usesCaller ? values.caller_id.trim() : '',
+    caller_name: config.usesCaller ? values.caller_name.trim() : '',
+    principal_id: config.usesPrincipal ? values.principal_id ?? 0 : 0,
+    credential_purpose_id: config.usesPurpose
+      ? values.credential_purpose_id ?? 0
+      : 0,
+  }
+  return {
+    app_ids: config.usesApps ? values.app_ids : [],
+    profilePatch,
+  }
 }
