@@ -49,15 +49,24 @@ func cleanUsageRange(t *testing.T, start, end int64) {
 	require.NoError(t, model.DB.Where("bucket_time >= ? AND bucket_time <= ?", start, end).Delete(&model.AIUsageHourly{}).Error)
 }
 
-// E.2 P1-A：partial-hour 输入（15:30~16:30）不丢边界小时，完整小时桶全部重建。
+// E.2 P1-A residual：partial-hour 输入（15:30~16:30）必须按完整小时读取 Log，
+// 边界桶不丢。日志落在 15:10/15:35（15:00 桶）与 16:25/16:50（16:00 桶），其中
+// 15:10 在输入起点 15:30 之前、16:50 在输入终点 16:30 之后，仍须全部进入整点桶。
+// 同时验证空 Other 日志被正常 skip（不视为解析失败、不中断 rebuild）。
 func TestProjectUsageRangePartialHourKeepsBoundaryBuckets(t *testing.T) {
 	h15 := bucketHour(1750000000)
 	h16 := h15 + 3600
 	cleanUsageRange(t, h15, h16)
 
-	// 15:35 与 16:25 两条日志。
-	require.NoError(t, model.DB.Create(usageTestLog(h15+2100, "gpt-4o", 100)).Error)
-	require.NoError(t, model.DB.Create(usageTestLog(h16+1500, "gpt-4o", 100)).Error)
+	// 15:10（早于输入起点）、15:35 → 15:00 桶；16:25、16:50（晚于输入终点）→ 16:00 桶。
+	require.NoError(t, model.DB.Create(usageTestLog(h15+600, "gpt-4o", 100)).Error)  // 15:10
+	require.NoError(t, model.DB.Create(usageTestLog(h15+2100, "gpt-4o", 100)).Error) // 15:35
+	require.NoError(t, model.DB.Create(usageTestLog(h16+1500, "gpt-4o", 100)).Error) // 16:25
+	require.NoError(t, model.DB.Create(usageTestLog(h16+3000, "gpt-4o", 100)).Error) // 16:50
+	// 空 Other 日志：应被正常 skip，rebuild 仍成功，不计数。
+	empty := usageTestLog(h15+1200, "gpt-4o", 50)
+	empty.Other = ""
+	require.NoError(t, model.DB.Create(empty).Error)
 
 	_, err := ProjectUsageRange(context.Background(), h15+1800, h16+1800) // 15:30~16:30
 	require.NoError(t, err)
@@ -65,16 +74,50 @@ func TestProjectUsageRangePartialHourKeepsBoundaryBuckets(t *testing.T) {
 	rows, err := model.QueryUsageRows(model.UsageProjectionFilter{BucketStart: h15, BucketEnd: h16})
 	require.NoError(t, err)
 	var count15, count16 int
+	var req15, req16 int64
 	for _, r := range rows {
 		switch r.BucketTime {
 		case h15:
 			count15++
+			req15 += r.RequestCount
 		case h16:
 			count16++
+			req16 += r.RequestCount
 		}
 	}
-	require.Equal(t, 1, count15, "15:30 输入应重建 15:00 整点桶且不丢日志")
-	require.Equal(t, 1, count16, "16:30 输入应重建 16:00 整点桶且不丢日志")
+	require.Equal(t, 1, count15, "15:00 整点桶应聚合 15:10+15:35 两条日志")
+	require.Equal(t, int64(2), req15, "15:00 桶请求数应为 2")
+	require.Equal(t, 1, count16, "16:00 整点桶应聚合 16:25+16:50 两条日志")
+	require.Equal(t, int64(2), req16, "16:00 桶请求数应为 2")
+}
+
+// E.2 P1-A residual：malformed Other JSON 属 rebuild parsing failure，返回 error，
+// 不执行 Replace，旧 projection 完整保留。
+func TestProjectUsageRangeMalformedOtherKeepsOldProjection(t *testing.T) {
+	h := bucketHour(1750002000)
+	require.NoError(t, model.DB.Where("bucket_time = ?", h).Delete(&model.AIUsageHourly{}).Error)
+	old := &model.AIUsageHourly{
+		BucketTime: h, ProfileID: 9, IdentityAssurance: "CREDENTIAL_ONLY",
+		DimensionHash: "old-dim-other", RequestCount: 7, ModelName: "gpt-4o",
+	}
+	require.NoError(t, model.DB.Create(old).Error)
+
+	// 一条真正 JSON parse error 的日志。
+	malformed := &model.Log{
+		CreatedAt: h + 300, ModelName: "gpt-4o", Type: model.LogTypeConsume,
+		PromptTokens: 1, CompletionTokens: 1, Quota: 10, Other: "{not valid json",
+	}
+	require.NoError(t, model.DB.Create(malformed).Error)
+
+	_, err := ProjectUsageRange(context.Background(), h, h+3600)
+	require.Error(t, err, "malformed Other 应视为 rebuild parsing failure")
+
+	var cnt int64
+	require.NoError(t, model.DB.Model(&model.AIUsageHourly{}).Where("bucket_time = ?", h).Count(&cnt).Error)
+	require.Equal(t, int64(1), cnt, "解析失败时不得执行 Replace，旧 projection 必须完整保留")
+	var got model.AIUsageHourly
+	require.NoError(t, model.DB.Where("bucket_time = ?", h).First(&got).Error)
+	require.Equal(t, int64(7), got.RequestCount)
 }
 
 // E.2 P1-A：相同范围重复 rebuild 结果幂等（不因重复累加而翻倍）。
@@ -209,4 +252,63 @@ func TestDetectUsageAnomaliesDBFailureReturnsError(t *testing.T) {
 
 	_, err = DetectUsageAnomalies(context.Background(), 1749996000, 1750003200)
 	require.Error(t, err, "缺失 ai_usage_hourly 表时应返回 error 而非静默空结果")
+}
+
+// E.2 P1-D residual：每个候选的基线必须来自其自己之前的 N 天滚动窗口，绝不混入候选
+// 自身或当前范围中晚于它的小时（未来数据）。当前范围 [D, D+7 天] 内，D 的候选当前
+// =500，历史 D-7..D-1 同小时 =100，未来 D+1..D+7 同小时 =1000。
+//   - 正确（滚动窗口过滤）：基线 = median(100×7) = 100 → threshold=500 → 500 触发异常。
+//   - 旧实现（不按候选窗口过滤）：基线混入 D 自身(500)与未来(1000×7)，median=500 →
+//     threshold=2500 → 500 不触发。测试将失败，从而捕获回归。
+func TestDetectUsageAnomaliesCandidateBaselineRollingWindow(t *testing.T) {
+	cfg := system_setting.GetAIUsageAlertSettings()
+	cfg.HourlyRequestAlert = 100
+	cfg.BaselineMultiplier = 5
+	cfg.BaselineWindowDays = 7
+	cfg.HourlyTokenAlert = 0
+	cfg.HourlyQuotaAlert = 0
+	defer func() {
+		cfg.HourlyRequestAlert = 0
+		cfg.BaselineMultiplier = 0
+		cfg.BaselineWindowDays = 0
+	}()
+
+	h := bucketHour(1750000000) // 候选日 D，整点小时
+	day := int64(24 * 3600)
+	// 清理本测试覆盖的整段范围（D-8 天 ~ D+8 天），避免与其他测试共享 DB 泄漏。
+	require.NoError(t, model.DB.Where("bucket_time >= ? AND bucket_time <= ?",
+		h-8*day, h+8*day).Delete(&model.AIUsageHourly{}).Error)
+
+	mk := func(offsetDay int64, req int64) *model.AIUsageHourly {
+		return &model.AIUsageHourly{
+			BucketTime: h + offsetDay*day, ProfileID: 9, PrincipalID: 1, CredentialPurposeID: 10,
+			ModelName: "gpt-4o", IdentityAssurance: "CREDENTIAL_ONLY",
+			DimensionHash: fmt.Sprintf("dim-rw-%d-%d", offsetDay, req),
+			RequestCount:  req,
+		}
+	}
+	// 真实历史 D-7 .. D-1 同小时 = 100。
+	for d := int64(-7); d <= -1; d++ {
+		require.NoError(t, model.DB.Create(mk(d, 100)).Error)
+	}
+	// 未来 D+1 .. D+7 同小时 = 1000（位于当前范围内，必须被滚动窗口排除在 D 的基线外）。
+	for d := int64(1); d <= 7; d++ {
+		require.NoError(t, model.DB.Create(mk(d, 1000)).Error)
+	}
+	// 候选：D 当前 = 500。
+	require.NoError(t, model.DB.Create(mk(0, 500)).Error)
+
+	anomalies, err := DetectUsageAnomalies(context.Background(), h, h+7*day)
+	require.NoError(t, err)
+
+	var found bool
+	for _, a := range anomalies {
+		if a.Metric == "request" && a.BucketTime == h && a.ProfileID == 9 {
+			found = true
+			require.Equal(t, int64(100), a.Baseline, "基线只能来自 D-7..D-1 的历史 100，不得混入 D 自身或未来 1000")
+			require.Equal(t, int64(500), a.Threshold, "threshold = max(baseline*5, abs100) = 500")
+			require.Equal(t, int64(500), a.Current)
+		}
+	}
+	require.True(t, found, "D 当前 500 相对历史基线 100（*5=500）应产生 request 异常；若混入未来 1000 将不触发")
 }

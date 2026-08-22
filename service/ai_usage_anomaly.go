@@ -132,12 +132,18 @@ func DetectUsageAnomalies(ctx context.Context, bucketStart, bucketEnd int64) ([]
 			c.IdentityAssurance != "CREDENTIAL_ONLY" {
 			continue
 		}
-		// 基线：收集该 profile+purpose 在窗口内同小时的历史值（排除当前桶）。
+		// 基线必须来自候选自己之前的 N 天滚动窗口，绝不混入候选自身或当前范围中晚于它
+		// 的小时（E.2 P1-D residual）。baseRows 只是两次查询所需的超集读取，仍需按每个
+		// 候选自己的窗口过滤。
+		historyStart := c.BucketTime - int64(days)*24*3600
+		// 基线：收集该 profile+purpose 在候选滚动窗口内同小时的历史值（严格早于候选自身）。
 		var reqHist, tokHist, quotaHist []int64
 		for _, b := range baseByKey {
 			if b.ProfileID == c.ProfileID && b.PrincipalID == c.PrincipalID &&
 				b.CredentialPurposeID == c.CredentialPurposeID &&
-				b.ModelName == c.ModelName && hourOfDay(b.BucketTime) == hourOfDay(c.BucketTime) {
+				b.ModelName == c.ModelName &&
+				b.BucketTime >= historyStart && b.BucketTime < c.BucketTime &&
+				hourOfDay(b.BucketTime) == hourOfDay(c.BucketTime) {
 				reqHist = append(reqHist, b.RequestCount)
 				tokHist = append(tokHist, b.TotalTokens)
 				quotaHist = append(quotaHist, b.QuotaNet)

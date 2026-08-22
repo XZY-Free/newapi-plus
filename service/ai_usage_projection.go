@@ -87,16 +87,23 @@ func bucketHour(ts int64) int64 {
 // ProjectUsageRange 将 [start, end]（Unix 秒）内 Log 归一到整点投影，并原子替换该范围。
 // 幂等；失败不留下半清空数据（§12.6 / E.2 P1-A）。
 //
-// 输入先规范化为完整小时 bucketStart/bucketEnd（粒度固定为整点小时），读取覆盖这些
-// 完整小时的 Log，全部解析/聚合成功后经 ReplaceUsageProjectionRange 在单事务内
-// 原子替换。绝不在读取/计算完成前删除旧投影：任何读取、Context、解析或数据库错误
-// 发生在 Replace 之前时，原投影完整保留。
+// 输入先规范化为完整小时 bucketStart/bucketEnd（粒度固定为整点小时），Log 读取范围
+// 必须覆盖这些完整小时：logReadStart = bucketStart、logReadEnd = bucketEnd + 3599
+// （GetLogsByTimeRange 用 created_at <= end 闭区间）。否则输入 15:30~16:30 会丢失
+// 15:00~15:29 与 16:31~16:59 的日志。绝不用原始 start/end 读取。
+//
+// 全部 Log 解析/聚合成功后经 ReplaceUsageProjectionRange 在单事务内原子替换。绝不在
+// 读取/计算完成前删除旧投影：任何读取、Context 或数据库错误发生在 Replace 之前时，原
+// 投影完整保留。malformed Other JSON 属 rebuild parsing failure，直接返回 error，
+// 不执行 Replace、原投影完整保留；Other 为空或合法 JSON 但无 ai_attribution 正常 skip。
 func ProjectUsageRange(ctx context.Context, start, end int64) (int, error) {
 	if end <= start {
 		return 0, nil
 	}
 	bucketStart := bucketHour(start)
 	bucketEnd := bucketHour(end)
+	logReadStart := bucketStart
+	logReadEnd := bucketEnd + 3599 // 闭区间覆盖最后一个完整小时的最后一秒
 
 	rows := make([]*model.AIUsageHourly, 0, 256)
 	seen := make(map[string]*model.AIUsageHourly) // dimension_hash -> row，先累加再一次性写回
@@ -106,7 +113,7 @@ func ProjectUsageRange(ctx context.Context, start, end int64) (int, error) {
 		if ctx.Err() != nil {
 			return total, ctx.Err()
 		}
-		logs, err := model.GetLogsByTimeRange(start, end, usageProjectionPageSize, offset)
+		logs, err := model.GetLogsByTimeRange(logReadStart, logReadEnd, usageProjectionPageSize, offset)
 		if err != nil {
 			return total, err
 		}
@@ -115,8 +122,12 @@ func ProjectUsageRange(ctx context.Context, start, end int64) (int, error) {
 		}
 		for _, log := range logs {
 			other, err := parseLogOther(log.Other)
-			if err != nil || other == nil {
-				continue
+			if err != nil {
+				// malformed Other JSON → rebuild parsing failure：保留旧投影，不执行 Replace。
+				return total, fmt.Errorf("parse log other failed (id=%d): %w", log.Id, err)
+			}
+			if other == nil {
+				continue // 空 Other 正常 skip
 			}
 			row, ok := BuildUsageProjectionRow(log, other, bucketHour(log.CreatedAt))
 			if !ok {
