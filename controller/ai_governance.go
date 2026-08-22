@@ -933,7 +933,7 @@ func GetIdentityAuditEvents(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := q.Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&events).Error; err != nil {
+	if err := q.Order("created_at desc, id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&events).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}

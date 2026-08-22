@@ -414,6 +414,37 @@ func TestAIGovernanceAuditEventsInvalidQueryRejected(t *testing.T) {
 	}
 }
 
+// D.2：GetIdentityAuditEvents 稳定排序为 created_at DESC, id DESC，保证同一时间戳的
+// 多条事件顺序确定（分页不因时间戳相同而在翻页间抖动）。
+func TestAIGovernanceAuditEventsDeterministicOrdering(t *testing.T) {
+	setupAIGovernanceControllerTestDB(t)
+	const ts = int64(1700000000)
+	for i := 0; i < 3; i++ {
+		require.NoError(t, model.DB.Create(&model.AIIdentityAuditEvent{
+			CreatedAt:   ts,
+			RequestId:   fmt.Sprintf("req-order-%d", i),
+			Result:      constant.IdentityAuditResultUnverified,
+			ReasonCode:  constant.ReasonCodeProfileRequired,
+			HttpMethod:  "POST",
+			RequestPath: "/v1/chat/completions",
+			ClientIp:    "203.0.113.1",
+		}).Error)
+	}
+	rec := doAIGovernanceRequest(t, GetIdentityAuditEvents, http.MethodGet, "/g", "", nil)
+	ok, msg, data := decodeAIGovernanceResponse(t, rec)
+	require.True(t, ok, msg)
+	var page struct {
+		Items []model.AIIdentityAuditEvent `json:"items"`
+		Total int64                        `json:"total"`
+	}
+	require.NoError(t, common.Unmarshal(data, &page))
+	require.Equal(t, int64(3), page.Total)
+	require.Len(t, page.Items, 3)
+	// 相同 created_at → 必须按 id DESC 返回，保证确定性顺序。
+	require.Greater(t, page.Items[0].Id, page.Items[1].Id, "同时间戳首条应为最大 id")
+	require.Greater(t, page.Items[1].Id, page.Items[2].Id, "同时间戳按 id DESC")
+}
+
 // 门禁：分页 page_size 有 200 上限，超大值必须在 handler 实际返回中被限制；
 // 默认 20、合法小值不被改写。通过 handler 返回的 page_size 保护 API 合约。
 func TestAIGovernancePaginationPageSizeCapped(t *testing.T) {

@@ -210,6 +210,164 @@ describe('Identity Audit page', () => {
     )
   })
 
+  test('result faceted filter forwards the real result backend param', async () => {
+    vi.mocked(listIdentityAuditEvents).mockResolvedValue({
+      items: [event],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<IdentityAuditPage />)
+    await screen.findByText('req_identity_7f3a')
+
+    // 列头排序按钮与工具条筛选触发器都叫 "Result"，取带加号图标的 faceted 触发器。
+    const filterTrigger = screen
+      .getAllByRole('button', { name: 'Result' })
+      .find((b) => b.querySelector('.lucide-circle-plus'))
+    if (!filterTrigger) {
+      throw new Error('Result faceted filter trigger not found')
+    }
+    await userEvent.click(filterTrigger)
+
+    const rejected = await screen.findByRole('option', { name: /REJECTED/ })
+    await userEvent.click(rejected)
+
+    await waitFor(() =>
+      expect(listIdentityAuditEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ result: 'REJECTED' })
+      )
+    )
+  })
+
+  test('reason faceted filter forwards the real reason_code backend param', async () => {
+    vi.mocked(listIdentityAuditEvents).mockResolvedValue({
+      items: [event],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<IdentityAuditPage />)
+    await screen.findByText('req_identity_7f3a')
+
+    const filterTrigger = screen
+      .getAllByRole('button', { name: 'Reason' })
+      .find((b) => b.querySelector('.lucide-circle-plus'))
+    if (!filterTrigger) {
+      throw new Error('Reason faceted filter trigger not found')
+    }
+    await userEvent.click(filterTrigger)
+
+    const signature = await screen.findByRole('option', {
+      name: /SIGNATURE_INVALID/,
+    })
+    await userEvent.click(signature)
+
+    await waitFor(() =>
+      expect(listIdentityAuditEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ reason_code: 'SIGNATURE_INVALID' })
+      )
+    )
+  })
+
+  test('same-name tokens remain distinguishable by their token ID in the selector', async () => {
+    vi.mocked(listIdentityAuditEvents).mockResolvedValue({
+      items: [event],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    const makeKey = (id: number) => ({
+      id,
+      name: 'Pipeline Key',
+      key: 'sk_abc',
+      status: 1,
+      remain_quota: 100,
+      used_quota: 0,
+      unlimited_quota: false,
+      expired_time: -1,
+      created_time: 1,
+      accessed_time: 1,
+      group: '',
+      auto_groups: null,
+      cross_group_retry: false,
+      model_limits_enabled: false,
+      model_limits: '',
+      allow_ips: '',
+    })
+    vi.mocked(getApiKeys).mockResolvedValue({
+      success: true,
+      data: {
+        items: [makeKey(7), makeKey(88)],
+        total: 2,
+        page: 1,
+        page_size: 50,
+      },
+    })
+    renderPage(<IdentityAuditPage />)
+    await screen.findByText('req_identity_7f3a')
+
+    await userEvent.click(screen.getByRole('combobox', { name: 'Select API key' }))
+
+    // 同名 token 通过 Token ID 描述行消歧，可独立辨识两个候选。
+    expect(await screen.findByText('Token ID: 7')).toBeInTheDocument()
+    expect(screen.getByText('Token ID: 88')).toBeInTheDocument()
+    expect(screen.getAllByText('Pipeline Key').length).toBeGreaterThan(1)
+
+    await userEvent.click(screen.getByText('Token ID: 88'))
+
+    await waitFor(() =>
+      expect(listIdentityAuditEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ token_id: 88 })
+      )
+    )
+  })
+
+  test('historical token_id is filterable by manual numeric input without depending on token selector lookup', async () => {
+    vi.mocked(listIdentityAuditEvents).mockResolvedValue({
+      items: [event],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    // 已删除/历史 token 在 TokenSelect 数据源里查不到：getApiKeys 返回空。
+    vi.mocked(getApiKeys).mockResolvedValue({
+      success: true,
+      data: { items: [], total: 0, page: 1, page_size: 50 },
+    })
+    renderPage(<IdentityAuditPage />)
+    await screen.findByText('req_identity_7f3a')
+
+    await userEvent.type(screen.getByLabelText('Token ID'), '999')
+
+    await waitFor(() =>
+      expect(listIdentityAuditEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ token_id: 999 })
+      )
+    )
+  })
+
+  test('detail drawer explains UNVERIFIED/REJECTED as runtime disposition, not audit/enforce mode', async () => {
+    vi.mocked(listIdentityAuditEvents).mockResolvedValue({
+      items: [event],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    renderPage(<IdentityAuditPage />)
+    await screen.findByText('req_identity_7f3a')
+
+    await userEvent.click(screen.getByRole('button', { name: 'View Details' }))
+
+    expect(
+      await screen.findByText(
+        /UNVERIFIED means the request continued with a degraded or unverified identity, REJECTED means it was blocked by identity or credential governance/
+      )
+    ).toBeInTheDocument()
+    // 不得把 result 写成 audit/enforce 模式语义。
+    expect(screen.queryByText(/audit mode/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/enforce mode/i)).not.toBeInTheDocument()
+  })
+
   test('detail drawer separates profile snapshot from verification outcome and never fabricates client_verified', async () => {
     vi.mocked(listIdentityAuditEvents).mockResolvedValue({
       items: [event],

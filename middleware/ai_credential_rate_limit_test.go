@@ -8,8 +8,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -115,6 +117,66 @@ func TestAICredentialRateLimitStoreUnavailable(t *testing.T) {
 		r := newRateLimitRouter(t, tokenID)
 		rec := performAIRequest(r, http.MethodPost, "/v1/chat/completions", nil)
 		require.Equal(t, http.StatusNoContent, rec.Code, "audit 存储不可用放行")
+	})
+}
+
+// D.2：CREDENTIAL_RATE_LIMIT_EXCEEDED 在 audit/enforce 两个模式都实际 429 阻断（Provider
+// 收不到请求），故审计 result 一律 REJECTED，不得写成 UNVERIFIED。
+func TestAICredentialRateLimitExceededDispositionResult(t *testing.T) {
+	for _, mode := range []string{constant.AttributionModeAudit, constant.AttributionModeEnforce} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv(constant.AttributionModeEnv, mode)
+			setupAIMiddlewareEnv(t)
+			tokenID, _ := createAIMiddlewareProfile(t,
+				constant.IdentityModeStatic, constant.AttributionTargetPrincipal,
+				constant.IdentityAssuranceCredentialOnly, false, rlPatch(true, 60, 2))
+			require.NoError(t, model.DB.Where("1 = 1").Delete(&model.AIIdentityAuditEvent{}).Error)
+
+			r := newRateLimitRouter(t, tokenID)
+			require.Equal(t, http.StatusNoContent, performAIRequest(r, http.MethodPost, "/v1/chat/completions", nil).Code)
+			require.Equal(t, http.StatusNoContent, performAIRequest(r, http.MethodPost, "/v1/chat/completions", nil).Code)
+			third := performAIRequest(r, http.MethodPost, "/v1/chat/completions", nil)
+			require.Equal(t, http.StatusTooManyRequests, third.Code, "%s 超阈值 429", mode)
+
+			evs := listIdentityAuditEvents(t)
+			require.Len(t, evs, 1, "%s 超阈值恰好一条审计事件", mode)
+			assert.Equal(t, constant.IdentityAuditResultRejected, evs[0].Result, "%s 超阈值 429 阻断 → REJECTED", mode)
+			assert.Equal(t, constant.ReasonCodeCredentialRateLimitExceeded, evs[0].ReasonCode)
+		})
+	}
+}
+
+// D.2：CREDENTIAL_RATE_LIMIT_STORE_UNAVAILABLE 依实际处置定 result：
+// audit 放行 → UNVERIFIED；enforce 503 fail-closed → REJECTED。
+func TestAICredentialRateLimitStoreUnavailableDispositionResult(t *testing.T) {
+	setupAIMiddlewareEnv(t)
+	tokenID, _ := createAIMiddlewareProfile(t,
+		constant.IdentityModeStatic, constant.AttributionTargetPrincipal,
+		constant.IdentityAssuranceCredentialOnly, false, rlPatch(true, 60, 10))
+
+	t.Run("audit allows → UNVERIFIED", func(t *testing.T) {
+		t.Setenv(constant.AttributionModeEnv, constant.AttributionModeAudit)
+		common.RDB = nil
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.AIIdentityAuditEvent{}).Error)
+		r := newRateLimitRouter(t, tokenID)
+		rec := performAIRequest(r, http.MethodPost, "/v1/chat/completions", nil)
+		require.Equal(t, http.StatusNoContent, rec.Code, "audit 存储不可用放行")
+		evs := listIdentityAuditEvents(t)
+		require.Len(t, evs, 1)
+		assert.Equal(t, constant.IdentityAuditResultUnverified, evs[0].Result)
+		assert.Equal(t, constant.ReasonCodeCredentialRateLimitStoreUnavailable, evs[0].ReasonCode)
+	})
+	t.Run("enforce 503 → REJECTED", func(t *testing.T) {
+		t.Setenv(constant.AttributionModeEnv, constant.AttributionModeEnforce)
+		common.RDB = nil
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.AIIdentityAuditEvent{}).Error)
+		r := newRateLimitRouter(t, tokenID)
+		rec := performAIRequest(r, http.MethodPost, "/v1/chat/completions", nil)
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code, "enforce 存储不可用 503")
+		evs := listIdentityAuditEvents(t)
+		require.Len(t, evs, 1)
+		assert.Equal(t, constant.IdentityAuditResultRejected, evs[0].Result)
+		assert.Equal(t, constant.ReasonCodeCredentialRateLimitStoreUnavailable, evs[0].ReasonCode)
 	})
 }
 

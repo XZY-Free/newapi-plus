@@ -67,11 +67,29 @@ export function IdentityAuditPage() {
   const [detailEvent, setDetailEvent] = useState<GovernanceAuditEvent | null>(
     null
   )
+  // 手工 Token ID 输入时递增，作为 TokenSelect 的 key 强制重置其展示标签，
+  // 避免残留上一个已选中当前 Token 的 name，造成与 tokenIdFilter 不一致。
+  const [tokenManualEditSeq, setTokenManualEditSeq] = useState(0)
 
   const profileIdValue = profileIdFilter ? Number(profileIdFilter) : undefined
 
   const handleTokenFilterChange = (value: number | null) => {
     setTokenIdFilter(value)
+    tableState.onPaginationChange({
+      pageIndex: 0,
+      pageSize: tableState.pagination.pageSize,
+    })
+  }
+
+  // 历史/已删除 Token 的手工 token_id 精确查询：直接写同一 tokenIdFilter，
+  // 不依赖 TokenSelect 的 getApiKeys/searchApiKeys 是否成功找到该 Token。
+  const handleTokenIdInputChange = (raw: string) => {
+    const n = raw.trim() === '' ? 0 : Number(raw)
+    const next = Number.isInteger(n) && n > 0 ? n : null
+    setTokenIdFilter(next)
+    if (next != null) {
+      setTokenManualEditSeq((s) => s + 1)
+    }
     tableState.onPaginationChange({
       pageIndex: 0,
       pageSize: tableState.pagination.pageSize,
@@ -86,12 +104,20 @@ export function IdentityAuditPage() {
     })
   }
 
-  const resultFilter = tableState.columnFilters.find(
+  // faceted 筛选把选中值存为 string[]，后端 result / reason_code 参数是单值字符串，
+  // 这里取 singleSelect 的第一个值，确保转发给后端的是标量而非数组。
+  const resultFilterValue = tableState.columnFilters.find(
     (f) => f.id === 'result'
-  )?.value as IdentityAuditResult | undefined
-  const reasonFilter = tableState.columnFilters.find(
+  )?.value
+  const resultFilter = Array.isArray(resultFilterValue)
+    ? (resultFilterValue[0] as IdentityAuditResult | undefined)
+    : (resultFilterValue as IdentityAuditResult | undefined)
+  const reasonFilterValue = tableState.columnFilters.find(
     (f) => f.id === 'reason_code'
-  )?.value as string | undefined
+  )?.value
+  const reasonFilter = Array.isArray(reasonFilterValue)
+    ? (reasonFilterValue[0] as string | undefined)
+    : (reasonFilterValue as string | undefined)
 
   const columns: ColumnDef<GovernanceAuditEvent>[] = [
     {
@@ -279,9 +305,20 @@ export function IdentityAuditPage() {
 
       <div className='mb-3 flex flex-wrap items-center gap-2'>
         <TokenSelect
+          key={tokenManualEditSeq}
           value={tokenIdFilter}
           onChange={handleTokenFilterChange}
+          showTokenId
           className='w-[260px]'
+        />
+        <Input
+          type='number'
+          min={1}
+          value={tokenIdFilter != null ? String(tokenIdFilter) : ''}
+          onChange={(e) => handleTokenIdInputChange(e.target.value)}
+          placeholder={t('Token ID')}
+          aria-label={t('Token ID')}
+          className='w-[140px]'
         />
         {tokenIdFilter != null && (
           <Button

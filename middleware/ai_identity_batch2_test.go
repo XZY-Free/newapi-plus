@@ -468,7 +468,8 @@ func TestAICredentialRateLimitAuditWritesReasonToRedis(t *testing.T) {
 	evs := listIdentityAuditEvents(t)
 	require.Len(t, evs, 1, "429 必须落一条凭证限流审计事件")
 	assert.Equal(t, constant.ReasonCodeCredentialRateLimitExceeded, evs[0].ReasonCode)
-	assert.Equal(t, constant.IdentityAuditResultUnverified, evs[0].Result)
+	// D.2 处置语义：CREDENTIAL_RATE_LIMIT_EXCEEDED 两个模式都实际 429 阻断 → REJECTED。
+	assert.Equal(t, constant.IdentityAuditResultRejected, evs[0].Result)
 }
 
 // --- #12：Kling/Jimeng converter 外部 canonical 路径 + GetResult 跳过 ---

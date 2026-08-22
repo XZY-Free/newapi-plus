@@ -5344,7 +5344,7 @@
     "No identity audit events match the current search and filters.": "沒有符合目前搜尋與篩選條件的稽核事件",
     "Request context, profile snapshot and verification outcome for a single identity audit event.": "單一身分稽核事件的請求上下文、身分配置快照與驗證結果",
     "The identity mode, assurance and caller the resolved profile was configured with at request time. These are profile configuration facts, not proof of client verification.": "請求當下命中的身分配置所解析出的身分模式、可信等級與呼叫方。這些是身分配置事實，不代表用戶端驗證成功。",
-    "The single-request runtime outcome: UNVERIFIED means the request was downgraded in audit mode, REJECTED means it was blocked in enforce mode. It also records the root app the client claimed. The backend audit event has no client_verified field.": "單次請求的執行時期結果：UNVERIFIED 表示在稽核模式下被降級放行，REJECTED 表示在強制模式下被拒絕。同時記錄用戶端聲稱的 root app。後端稽核事件沒有 client_verified 欄位。",
+    "The single-request runtime outcome: UNVERIFIED means the request continued with a degraded or unverified identity, REJECTED means it was blocked by identity or credential governance. It also records the root app the client claimed. The backend audit event has no client_verified field.": "單次請求的執行時期結果：UNVERIFIED 表示請求以降級或未驗證身分繼續，REJECTED 表示請求被身分或憑證治理實際阻斷。同時記錄用戶端聲稱的 root app。後端稽核事件沒有 client_verified 欄位。",
     "Identity audit records which request had an identity problem, which token and profile it hit, what the client claimed, and whether it was downgraded or rejected.": "身分稽核記錄哪個請求出現身分問題、命中了哪把 Token 與哪個身分配置、用戶端聲稱了什麼，以及它是被降級還是被拒絕。",
     "Enterprise Usage": "企業用量",
     "Governance Master Data": "治理主資料",

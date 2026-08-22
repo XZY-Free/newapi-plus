@@ -77,7 +77,7 @@ func AIIdentityAuth() func(c *gin.Context) {
 			if service.IsAttributionRequired(c.Request.Method, c.Request.URL.Path) {
 				writeIdentityAudit(c, mode, &model.AIIdentityAuditEvent{
 					RequestId:   c.GetString(common.RequestIdKey),
-					Result:      constant.IdentityAuditResultUnverified,
+					Result:      constant.IdentityAuditResultRejected,
 					ReasonCode:  constant.ReasonCodeAttributionModeInvalid,
 					HttpMethod:  c.Request.Method,
 					RequestPath: c.Request.URL.Path,
@@ -105,7 +105,7 @@ func AIIdentityAuth() func(c *gin.Context) {
 			// 消费入口上缺少 token：audit 放行（token-only 降级），enforce 拒绝。
 			writeIdentityAudit(c, mode, &model.AIIdentityAuditEvent{
 				RequestId:   c.GetString(common.RequestIdKey),
-				Result:      constant.IdentityAuditResultUnverified,
+				Result:      identityAuditResultForMode(mode),
 				ReasonCode:  constant.ReasonCodeProfileRequired,
 				HttpMethod:  c.Request.Method,
 				RequestPath: c.Request.URL.Path,
@@ -126,7 +126,7 @@ func AIIdentityAuth() func(c *gin.Context) {
 			writeIdentityAudit(c, mode, &model.AIIdentityAuditEvent{
 				RequestId:   c.GetString(common.RequestIdKey),
 				TokenId:     tokenID,
-				Result:      constant.IdentityAuditResultUnverified,
+				Result:      identityAuditResultForMode(mode),
 				ReasonCode:  constant.ReasonCodeStoreUnavailable,
 				HttpMethod:  c.Request.Method,
 				RequestPath: c.Request.URL.Path,
@@ -201,7 +201,7 @@ func handleProfileMissing(c *gin.Context, mode string, tokenID int) {
 	writeIdentityAudit(c, mode, &model.AIIdentityAuditEvent{
 		RequestId:   c.GetString(common.RequestIdKey),
 		TokenId:     tokenID,
-		Result:      constant.IdentityAuditResultUnverified,
+		Result:      identityAuditResultForMode(mode),
 		ReasonCode:  constant.ReasonCodeProfileRequired,
 		HttpMethod:  c.Request.Method,
 		RequestPath: c.Request.URL.Path,
@@ -220,7 +220,7 @@ func handleProfileDisabled(c *gin.Context, mode string, snapshot *newtypes.Ident
 		RequestId:   c.GetString(common.RequestIdKey),
 		TokenId:     snapshot.TokenID,
 		ProfileId:   snapshot.ProfileID,
-		Result:      constant.IdentityAuditResultUnverified,
+		Result:      identityAuditResultForMode(mode),
 		ReasonCode:  constant.ReasonCodeProfileDisabled,
 		HttpMethod:  c.Request.Method,
 		RequestPath: c.Request.URL.Path,
@@ -239,7 +239,7 @@ func handleIdentityModeInvalid(c *gin.Context, mode string, snapshot *newtypes.I
 		RequestId:   c.GetString(common.RequestIdKey),
 		TokenId:     snapshot.TokenID,
 		ProfileId:   snapshot.ProfileID,
-		Result:      constant.IdentityAuditResultUnverified,
+		Result:      identityAuditResultForMode(mode),
 		ReasonCode:  constant.ReasonCodeIdentityModeInvalid,
 		HttpMethod:  c.Request.Method,
 		RequestPath: c.Request.URL.Path,
@@ -294,7 +294,7 @@ func handleSnapshotInvalid(c *gin.Context, mode string, snapshot *newtypes.Ident
 		RequestId:   c.GetString(common.RequestIdKey),
 		TokenId:     snapshot.TokenID,
 		ProfileId:   snapshot.ProfileID,
-		Result:      constant.IdentityAuditResultUnverified,
+		Result:      identityAuditResultForMode(mode),
 		ReasonCode:  failure.reason,
 		HttpMethod:  c.Request.Method,
 		RequestPath: c.Request.URL.Path,
@@ -339,7 +339,7 @@ func handleStaticAttribution(c *gin.Context, mode string, snapshot *newtypes.Ide
 			CredentialPurposeId: snapshot.CredentialPurposeID,
 			IdentityMode:        snapshot.IdentityMode,
 			IdentityAssurance:   snapshot.IdentityAssurance,
-			Result:              constant.IdentityAuditResultUnverified,
+			Result:              identityAuditResultForMode(mode),
 			ReasonCode:          failure.reason,
 			HttpMethod:          c.Request.Method,
 			RequestPath:         c.Request.URL.Path,
@@ -583,7 +583,7 @@ func handleIdentityRedisDown(c *gin.Context, mode string, snapshot *newtypes.Ide
 		CallerId:          snapshot.CallerID,
 		IdentityMode:      snapshot.IdentityMode,
 		IdentityAssurance: snapshot.IdentityAssurance,
-		Result:            constant.IdentityAuditResultUnverified,
+		Result:            identityAuditResultForMode(mode),
 		ReasonCode:        constant.ReasonCodeReplayStoreUnavailable,
 		HttpMethod:        c.Request.Method,
 		RequestPath:       c.Request.URL.Path,
@@ -615,6 +615,16 @@ func originalMethodPath(c *gin.Context) (string, string) {
 		}
 	}
 	return method, path
+}
+
+// identityAuditResultForMode 依据实际处置决定 result，是 result 的唯一判定，避免每个
+// callsite 重复 mode 判断：enforce 命中即 abort → REJECTED；audit 降级放行 → UNVERIFIED。
+// disabled 不落库（由 writeIdentityAudit 过滤），故这里只需区分 enforce 与其余。
+func identityAuditResultForMode(mode string) string {
+	if mode == constant.AttributionModeEnforce {
+		return constant.IdentityAuditResultRejected
+	}
+	return constant.IdentityAuditResultUnverified
 }
 
 // writeIdentityAudit 仅在 audit/enforce 模式下落审计事件（disabled 不写）。

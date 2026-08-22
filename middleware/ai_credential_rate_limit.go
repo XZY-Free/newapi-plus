@@ -97,6 +97,13 @@ func writeCredentialRateLimitAudit(c *gin.Context, mode string, ctx *constant.Tr
 	if mode == constant.AttributionModeDisabled {
 		return
 	}
+	// 处置语义：CREDENTIAL_RATE_LIMIT_EXCEEDED 两个模式都实际 429 阻断 → REJECTED；
+	// CREDENTIAL_RATE_LIMIT_STORE_UNAVAILABLE 只有 enforce 503 fail-closed → REJECTED，
+	// audit 放行 → UNVERIFIED。
+	result := constant.IdentityAuditResultUnverified
+	if reason == constant.ReasonCodeCredentialRateLimitExceeded || mode == constant.AttributionModeEnforce {
+		result = constant.IdentityAuditResultRejected
+	}
 	ev := &model.AIIdentityAuditEvent{
 		RequestId:           c.GetString(common.RequestIdKey),
 		TokenId:             ctx.TokenID,
@@ -106,7 +113,7 @@ func writeCredentialRateLimitAudit(c *gin.Context, mode string, ctx *constant.Tr
 		CredentialPurposeId: ctx.CredentialPurposeID,
 		IdentityMode:        ctx.IdentityMode,
 		IdentityAssurance:   ctx.IdentityAssurance,
-		Result:              constant.IdentityAuditResultUnverified,
+		Result:              result,
 		ReasonCode:          reason,
 		HttpMethod:          c.Request.Method,
 		RequestPath:         c.Request.URL.Path,

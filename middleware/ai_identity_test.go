@@ -610,6 +610,43 @@ func TestAIIdentityAuthProfileDisabledEnforce(t *testing.T) {
 	require.Contains(t, rec.Body.String(), constant.AIIdentityProfileDisabled)
 }
 
+// D.2：同一 PROFILE_DISABLED 失败按实际处置定 result——audit + c.Next() 降级放行 → UNVERIFIED；
+// enforce + abort 实际阻断 → REJECTED。disposition 才是 result 的正式含义，mode 本身不是。
+func TestAIIdentityAuthProfileDisabledDispositionResult(t *testing.T) {
+	setupAIMiddlewareEnv(t)
+	tokenID, _ := createAIMiddlewareProfile(t,
+		constant.IdentityModeStatic, constant.AttributionTargetPrincipal,
+		constant.IdentityAssuranceCredentialOnly, false, service.IdentityProfilePatch{})
+	snap, err := service.GetIdentitySnapshotByTokenID(tokenID)
+	require.NoError(t, err)
+	enabled := false
+	_, err = service.UpdateIdentityProfile(&service.IdentityProfilePatch{Id: snap.ProfileID, Enabled: &enabled})
+	require.NoError(t, err)
+
+	t.Run("audit continues → UNVERIFIED", func(t *testing.T) {
+		t.Setenv(constant.AttributionModeEnv, constant.AttributionModeAudit)
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.AIIdentityAuditEvent{}).Error)
+		r := newAIMiddlewareRouter(t, tokenID, &aiCapture{})
+		rec := performAIRequest(r, http.MethodPost, "/v1/chat/completions", nil)
+		require.Equal(t, http.StatusNoContent, rec.Code, "audit profile disabled 降级放行")
+		evs := listIdentityAuditEvents(t)
+		require.Len(t, evs, 1)
+		assert.Equal(t, constant.IdentityAuditResultUnverified, evs[0].Result)
+		assert.Equal(t, constant.ReasonCodeProfileDisabled, evs[0].ReasonCode)
+	})
+	t.Run("enforce aborts → REJECTED", func(t *testing.T) {
+		t.Setenv(constant.AttributionModeEnv, constant.AttributionModeEnforce)
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.AIIdentityAuditEvent{}).Error)
+		r := newAIMiddlewareRouter(t, tokenID, &aiCapture{})
+		rec := performAIRequest(r, http.MethodPost, "/v1/chat/completions", nil)
+		require.Equal(t, http.StatusForbidden, rec.Code, "enforce profile disabled 实际阻断")
+		evs := listIdentityAuditEvents(t)
+		require.Len(t, evs, 1)
+		assert.Equal(t, constant.IdentityAuditResultRejected, evs[0].Result)
+		assert.Equal(t, constant.ReasonCodeProfileDisabled, evs[0].ReasonCode)
+	})
+}
+
 // --- 非消费端点跳过（验收 H） ---
 
 func TestAIIdentityAuthSkipsNonConsumption(t *testing.T) {

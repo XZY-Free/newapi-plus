@@ -128,7 +128,7 @@ export function IdentityAuditDetailSheet({
             <section className={sideDrawerSectionClassName()}>
               <h3 className='text-sm font-semibold'>{t('Verification Outcome')}</h3>
               <p className='text-muted-foreground text-xs leading-5'>
-                {t('The single-request runtime outcome: UNVERIFIED means the request was downgraded in audit mode, REJECTED means it was blocked in enforce mode. It also records the root app the client claimed. The backend audit event has no client_verified field.')}
+                {t('The single-request runtime outcome: UNVERIFIED means the request continued with a degraded or unverified identity, REJECTED means it was blocked by identity or credential governance. It also records the root app the client claimed. The backend audit event has no client_verified field.')}
               </p>
               <dl className='grid grid-cols-2 gap-x-4 gap-y-3'>
                 <DetailField label={t('Result')}>

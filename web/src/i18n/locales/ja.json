@@ -5344,7 +5344,7 @@
     "No identity audit events match the current search and filters.": "現在の検索・絞り込み条件に一致するアイデンティティ監査イベントがありません",
     "Request context, profile snapshot and verification outcome for a single identity audit event.": "単一のアイデンティティ監査イベントのリクエストコンテキスト、プロファイルスナップショット、検証結果",
     "The identity mode, assurance and caller the resolved profile was configured with at request time. These are profile configuration facts, not proof of client verification.": "リクエスト時点で解決されたプロファイルに設定されていたアイデンティティモード、信頼レベル、呼び出し元。これらはプロファイル設定の事実であり、クライアント検証の証明ではありません。",
-    "The single-request runtime outcome: UNVERIFIED means the request was downgraded in audit mode, REJECTED means it was blocked in enforce mode. It also records the root app the client claimed. The backend audit event has no client_verified field.": "単一リクエストの実行時結果：UNVERIFIED は監査モードで降格されたこと、REJECTED は強制モードでブロックされたことを意味します。クライアントが申告した root app も記録されます。バックエンドの監査イベントには client_verified フィールドはありません。",
+    "The single-request runtime outcome: UNVERIFIED means the request continued with a degraded or unverified identity, REJECTED means it was blocked by identity or credential governance. It also records the root app the client claimed. The backend audit event has no client_verified field.": "単一リクエストの実行時結果：UNVERIFIED はリクエストが低下した、または未検証の身元で続行されたことを意味し、REJECTED は身元または認証情報ガバナンスによってブロックされたことを意味します。クライアントが申告した root app も記録されます。バックエンドの監査イベントには client_verified フィールドはありません。",
     "Identity audit records which request had an identity problem, which token and profile it hit, what the client claimed, and whether it was downgraded or rejected.": "アイデンティティ監査は、どのリクエストでアイデンティティ問題が発生し、どのトークンとプロファイルに当たり、クライアントが何を申告し、降格されたか拒否されたかを記録します。",
     "Enterprise Usage": "エンタープライズ使用量",
     "Governance Master Data": "ガバナンスマスタデータ",
